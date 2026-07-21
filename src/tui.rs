@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 const STATUS_HEIGHT: usize = 2;
 const ERROR_COALESCE_MS: u64 = 600;
 
-enum Mode { Normal, ModelPicker { filter: String, models: Vec<String>, selected: usize } }
+enum Mode { Normal, ModelPicker { filter: String, models: Vec<String>, selected: usize, scroll: usize } }
 
 struct App {
     conversation: Conversation,
@@ -137,7 +137,7 @@ async fn poll_crossterm_event(timeout: Duration) -> Option<TermEvent> {
 
 fn handle_input(app: &mut App, evt: TermEvent) -> bool {
     match &mut app.mode {
-        Mode::ModelPicker { filter, models, selected } => {
+        Mode::ModelPicker { filter, models, selected, .. } => {
             match evt {
                 TermEvent::Key(key) if key.kind == KeyEventKind::Press => match key.code {
                     KeyCode::Esc => { app.mode = Mode::Normal; return false; }
@@ -175,7 +175,7 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                 let text = app.input.trim().to_string();
                 if text == "/exit" { return true; }
                 if text.starts_with("/model") {
-                    app.mode = Mode::ModelPicker { filter: String::new(), models: app.available_models.clone(), selected: 0 };
+                    app.mode = Mode::ModelPicker { filter: String::new(), models: app.available_models.clone(), selected: 0, scroll: 0 };
                     app.input.clear();
                     return false;
                 }
@@ -227,7 +227,7 @@ fn render(f: &mut Frame<'_>, app: &mut App) {
     render_conversation(f, chunks[0], app);
     render_input(f, chunks[1], app);
     render_status(f, chunks[2], app);
-    if let Mode::ModelPicker { filter, models, selected } = &app.mode {
+    if let Mode::ModelPicker { filter, models, selected, scroll: _ } = &app.mode {
         render_model_picker(f, area, filter.as_str(), models, *selected);
     }
     // Flush stale error buffer on render tick
@@ -280,18 +280,26 @@ fn render_status(f: &mut Frame<'_>, area: Rect, app: &App) {
 
 fn render_model_picker(f: &mut Frame<'_>, area: Rect, filter: &str, models: &[String], selected: usize) {
     let filtered: Vec<(usize, &String)> = models.iter().enumerate().filter(|(_, m)| m.contains(filter) || filter.is_empty()).collect();
-    let max_h = (area.height / 2).min(20) as usize;
-    let picker_h = (filtered.len() + 3).min(max_h).max(4) as u16;
+    let view_h = ((area.height / 2).min(20) as usize).max(4);
+    let list_h = view_h.saturating_sub(3); // header + filter + footer
+    let picker_h = view_h as u16;
     let picker_w = area.width.saturating_sub(4).min(70);
     let x = (area.width - picker_w) / 2;
     let y = (area.height - picker_h) / 2;
     let picker_area = Rect::new(x, y, picker_w, picker_h);
+
     let sel = selected.min(filtered.len().saturating_sub(1));
+    // Scroll offset: keep selected centered in the list viewport
+    let scroll = if filtered.len() <= list_h { 0 }
+        else { sel.saturating_sub(list_h / 2).min(filtered.len().saturating_sub(list_h)) };
+
     let mut lines = vec![
         Line::from(Span::styled(" Select Model", Style::default().fg(Color::Cyan).bg(Color::Rgb(20, 20, 28)))),
         Line::from(Span::styled(format!(" Filter: {filter}"), Style::default().fg(Color::DarkGray).bg(Color::Rgb(20, 20, 28)))),
     ];
-    for (i, (_, model)) in filtered.iter().enumerate() {
+    let visible_range = scroll..(scroll + list_h).min(filtered.len());
+    for i in visible_range {
+        let (_, model) = &filtered[i];
         let marker = if i == sel { " ▸" } else { "  " };
         let style = if i == sel { Style::default().fg(Color::Cyan).bg(Color::Rgb(40, 40, 60)) } else { Style::default().bg(Color::Rgb(20, 20, 28)) };
         let label = if model.len() > (picker_w as usize).saturating_sub(4) { format!("{}…", &model[..(picker_w as usize).saturating_sub(5)]) } else { model.to_string() };

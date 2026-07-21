@@ -86,12 +86,9 @@ impl Client {
 
         match rx.await {
             Ok(v) => {
-                // Check if this is a JSON-RPC error response
-                if v.get("message").and_then(|m| m.as_str()).is_some() {
-                    let msg = v["message"].as_str().unwrap_or("unknown error");
-                    anyhow::bail!("{msg}")
-                }
-                if v.get("code").is_some() {
+                // JSON-RPC error responses have "code" (number) AND "message" (string).
+                // Normal result objects might have a "message" key too, so check for code first.
+                if v.get("code").and_then(|c| c.as_i64()).is_some() {
                     let msg = v["message"].as_str().unwrap_or("unknown error");
                     anyhow::bail!("{msg}")
                 }
@@ -137,10 +134,12 @@ impl Client {
     }
 
     pub async fn prompt(&mut self, session_id: &str, content: &str) -> Result<Value> {
-        self.request("session/prompt", Some(serde_json::json!({
+        let r = self.request("session/prompt", Some(serde_json::json!({
             "sessionId": session_id,
             "prompt": [{"type": "text", "text": content}],
-        }))).await
+        }))).await;
+        // The prompt request may return an error or hang; pass through as-is
+        r
     }
 }
 
