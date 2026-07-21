@@ -47,11 +47,12 @@ pub struct Conversation {
     pub messages: VecDeque<Message>,
     pub total_lines: usize,
     pub info: SessionInfo,
+    pub error: Option<String>,
 }
 
 impl Conversation {
     pub fn new() -> Self {
-        Self { messages: VecDeque::new(), total_lines: 0, info: SessionInfo::default() }
+        Self { messages: VecDeque::new(), total_lines: 0, info: SessionInfo::default(), error: None }
     }
 
     pub fn add_user_message(&mut self, text: &str) {
@@ -196,6 +197,10 @@ impl Conversation {
             if msg.role == Role::User {
                 out.push(Line::styled(" ┃ ", Style::default().fg(Color::Magenta)));
             }
+        }
+        if let Some(err) = &self.error {
+            out.push(Line::styled(format!("  ✕ {err}"), Style::default().fg(Color::Red)));
+            out.push(Line::styled("", Style::default().fg(Color::Red)));
         }
         out
     }

@@ -69,7 +69,7 @@ impl App {
             Event::UsageUpdate { ctx_pct, ctx_total, cost } => { self.conversation.info.ctx_pct = ctx_pct; self.conversation.info.ctx_total = ctx_total; self.conversation.info.cost = cost; }
             Event::ConfigUpdate { model, provider } => { if let Some(m) = model { self.conversation.info.model = m; } if let Some(p) = provider { self.conversation.info.provider = p; } }
             Event::SessionCreated { .. } => {}
-            Event::Error(msg) => { eprintln!("ACP error: {msg}"); }
+            Event::Error(msg) => { self.conversation.error = Some(msg); self.mark_dirty(); self.auto_scroll(); }
         }
         self.clamp_offset();
     }

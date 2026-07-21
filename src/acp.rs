@@ -46,7 +46,7 @@ impl Client {
             .env("OPENCODE_DISABLE_CHANNEL_DB", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::null())
             .spawn()
             .context("failed to spawn opencode acp")?;
 
@@ -176,7 +176,8 @@ pub fn start_reader<R: BufRead + Send + 'static>(
 
             if let Some(id) = msg.id {
                 if let Some(sender) = pending.lock().unwrap().remove(&id) {
-                    let value = msg.result.unwrap_or(Value::Null);
+                    // Prefer error over result for error responses
+                    let value = msg.error.clone().or(msg.result).unwrap_or(Value::Null);
                     let _ = sender.send(value);
                 }
             } else if let Some(method) = msg.method {

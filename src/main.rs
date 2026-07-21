@@ -110,23 +110,38 @@ async fn main() -> Result<()> {
     tokio::spawn(async move {
         let mut client = client;
         while let Some(cmd) = cmd_rx.recv().await {
+            fn send_error(tx: &mpsc::UnboundedSender<acp::Event>, msg: String) {
+                let _ = tx.send(acp::Event::Error(msg));
+            }
             match cmd {
                 acp::TuiCommand::SendPrompt { content, .. } => {
-                    if let Err(e) = client.prompt(&sid_for_cmd, &content).await {
-                        eprintln!("prompt error: {e}");
+                    match client.prompt(&sid_for_cmd, &content).await {
+                        Ok(_) => {}
+                        Err(e) => {
+                            // Extract user-friendly message from ACP error response
+                            let err_val = format!("{e}");
+                            let msg = if let Some(start) = err_val.find("\"message\":\"") {
+                                let after = &err_val[start + 11..];
+                                if let Some(end) = after.find('"') {
+                                    after[..end].to_string()
+                                } else { err_val }
+                            } else { err_val };
+                            send_error(&cmd_event_tx, msg);
+                        }
                     }
                 }
                 acp::TuiCommand::SetModel { model } => {
-                    if let Err(e) = client.set_model(&sid_for_cmd, &model).await {
-                        eprintln!("set_model error: {e}");
-                    } else {
-                        let parts: Vec<&str> = model.splitn(2, '/').collect();
-                        let (provider, model_name) = if parts.len() == 2 {
-                            (Some(parts[0].to_string()), Some(parts[1].to_string()))
-                        } else {
-                            (None, Some(model.clone()))
-                        };
-                        let _ = cmd_event_tx.send(acp::Event::ConfigUpdate { model: model_name, provider });
+                    match client.set_model(&sid_for_cmd, &model).await {
+                        Ok(_) => {
+                            let parts: Vec<&str> = model.splitn(2, '/').collect();
+                            let (provider, model_name) = if parts.len() == 2 {
+                                (Some(parts[0].to_string()), Some(parts[1].to_string()))
+                            } else {
+                                (None, Some(model.clone()))
+                            };
+                            let _ = cmd_event_tx.send(acp::Event::ConfigUpdate { model: model_name, provider });
+                        }
+                        Err(e) => send_error(&cmd_event_tx, format!("set_model: {e}")),
                     }
                 }
             }
