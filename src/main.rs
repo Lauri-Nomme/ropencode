@@ -106,6 +106,7 @@ async fn main() -> Result<()> {
 
     // Command handler: forwards prompts from TUI to ACP
     let sid_for_cmd = session_id.clone();
+    let cmd_event_tx = event_tx.clone();
     tokio::spawn(async move {
         let mut client = client;
         while let Some(cmd) = cmd_rx.recv().await {
@@ -118,6 +119,14 @@ async fn main() -> Result<()> {
                 acp::TuiCommand::SetModel { model } => {
                     if let Err(e) = client.set_model(&sid_for_cmd, &model).await {
                         eprintln!("set_model error: {e}");
+                    } else {
+                        let parts: Vec<&str> = model.splitn(2, '/').collect();
+                        let (provider, model_name) = if parts.len() == 2 {
+                            (Some(parts[0].to_string()), Some(parts[1].to_string()))
+                        } else {
+                            (None, Some(model.clone()))
+                        };
+                        let _ = cmd_event_tx.send(acp::Event::ConfigUpdate { model: model_name, provider });
                     }
                 }
             }
