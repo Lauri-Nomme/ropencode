@@ -261,11 +261,11 @@ fn parse_notification(method: &str, params: &Value) -> Option<Event> {
                     Some(Event::ToolResult { session_id: sid, tool, result })
                 }
                 "usage_update" => {
-                    let ctx_pct = update["contextPercentage"].as_f64().or_else(|| update["usage"]["contextPercentage"].as_f64()).unwrap_or(0.0);
-                    let ctx_total = update["contextTotal"].as_u64().or_else(|| update["usage"]["contextTotal"].as_u64()).unwrap_or(0);
-                    let cost = update["cost"].as_f64().or_else(|| update["usage"]["cost"].as_f64()).unwrap_or(0.0);
-                    eprintln!("[usage_update] ctx={ctx_pct}% total={ctx_total} cost={cost}");
-                    Some(Event::UsageUpdate { ctx_pct, ctx_total, cost })
+                    let size = update["size"].as_u64().unwrap_or(0);
+                    let used = update["used"].as_u64().unwrap_or(0);
+                    let ctx_pct = if size > 0 { used as f64 / size as f64 * 100.0 } else { 0.0 };
+                    let cost = update["cost"].as_f64().unwrap_or(0.0);
+                    Some(Event::UsageUpdate { ctx_pct, ctx_total: size, cost })
                 }
                 "config_option_update" => {
                     let model = update["model"].as_str().or_else(|| update["config"]["model"].as_str()).map(|s| s.to_string());
