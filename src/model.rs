@@ -114,9 +114,8 @@ impl Conversation {
     }
 
     pub fn finish_thinking(&mut self) {
-        let last = self.messages.len().saturating_sub(1);
-        if last > 0 && self.messages[last].is_thinking {
-            self.messages[last].is_thinking = false;
+        if let Some(msg) = self.messages.iter_mut().rev().find(|m| m.is_thinking) {
+            msg.is_thinking = false;
         }
     }
 

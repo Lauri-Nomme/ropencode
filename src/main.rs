@@ -64,9 +64,10 @@ async fn main() -> Result<()> {
     let (event_tx, event_rx) = mpsc::unbounded_channel::<acp::Event>();
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<acp::TuiCommand>();
 
-    let (mut client, stdout_reader) = acp::Client::spawn(ACP_BIN)?;
+    let (mut client, stdout_reader, stderr_reader) = acp::Client::spawn(ACP_BIN)?;
     let pending = std::sync::Arc::clone(&client.pending);
     let _reader = acp::start_reader(stdout_reader, pending, event_tx.clone());
+    let _stderr_reader = acp::start_stderr_reader(stderr_reader, event_tx.clone());
 
     let _caps = client.initialize().await.context("initialize failed")?;
 

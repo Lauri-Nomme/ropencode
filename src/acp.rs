@@ -46,12 +46,13 @@ impl Client {
             .env("OPENCODE_DISABLE_CHANNEL_DB", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .context("failed to spawn opencode acp")?;
 
         let stdin = child.stdin.take().context("no stdin")?;
         let stdout = child.stdout.take().context("no stdout")?;
+        let stderr = child.stderr.take().context("no stderr")?;
 
         Ok((
             Self {
@@ -61,6 +62,7 @@ impl Client {
                 pending: Arc::new(Mutex::new(HashMap::new())),
             },
             BufReader::new(stdout),
+            BufReader::new(stderr),
         ))
     }
 
@@ -83,7 +85,18 @@ impl Client {
         self.stdin.flush()?;
 
         match rx.await {
-            Ok(v) => Ok(v),
+            Ok(v) => {
+                // Check if this is a JSON-RPC error response
+                if v.get("message").and_then(|m| m.as_str()).is_some() {
+                    let msg = v["message"].as_str().unwrap_or("unknown error");
+                    anyhow::bail!("{msg}")
+                }
+                if v.get("code").is_some() {
+                    let msg = v["message"].as_str().unwrap_or("unknown error");
+                    anyhow::bail!("{msg}")
+                }
+                Ok(v)
+            }
             Err(_) => anyhow::bail!("response channel closed"),
         }
     }
@@ -145,6 +158,30 @@ struct Incoming {
     error: Option<Value>,
     #[serde(default)]
     params: Option<Value>,
+}
+
+/// Read stderr lines from the subprocess and forward as Error events.
+pub fn start_stderr_reader<R: BufRead + Send + 'static>(
+    reader: R,
+    tx: mpsc::UnboundedSender<Event>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::task::spawn_blocking(move || {
+        let mut reader = reader;
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {
+                    let trimmed = line.trim().to_string();
+                    if !trimmed.is_empty() {
+                        let _ = tx.send(Event::Error(trimmed));
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    })
 }
 
 pub fn start_reader<R: BufRead + Send + 'static>(
