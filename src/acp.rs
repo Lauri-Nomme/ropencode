@@ -12,6 +12,11 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, oneshot};
 
 #[derive(Debug, Clone)]
+pub enum TuiCommand {
+    SendPrompt { session_id: String, content: String },
+}
+
+#[derive(Debug, Clone)]
 pub enum Event {
     AgentTextChunk { session_id: String, text: String },
     AgentThoughtChunk { session_id: String, text: String },
@@ -106,6 +111,16 @@ impl Client {
     pub async fn list_sessions(&mut self, cwd: Option<&str>) -> Result<Value> {
         let params = cwd.map(|dir| serde_json::json!({ "cwd": dir }));
         self.request("session/list", params).await
+    }
+
+    pub async fn prompt(&mut self, session_id: &str, content: &str) -> Result<Value> {
+        self.request("session/prompt", Some(serde_json::json!({
+            "sessionId": session_id,
+            "messages": [{
+                "role": "user",
+                "content": [{"type": "text", "text": content}],
+            }],
+        }))).await
     }
 }
 

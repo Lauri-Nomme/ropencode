@@ -25,10 +25,11 @@ struct App {
     content_version: u64,
     last_rendered_version: u64,
     cwd: String,
+    cmd_tx: mpsc::UnboundedSender<crate::acp::TuiCommand>,
 }
 
 impl App {
-    fn new(cwd: String) -> Self {
+    fn new(cwd: String, cmd_tx: mpsc::UnboundedSender<crate::acp::TuiCommand>) -> Self {
         Self {
             conversation: Conversation::new(),
             scroll_offset: 0,
@@ -40,6 +41,7 @@ impl App {
             content_version: 0,
             last_rendered_version: 0,
             cwd,
+            cmd_tx,
         }
     }
 
@@ -124,13 +126,17 @@ impl App {
     fn check_sticky(&mut self) { if self.is_at_bottom() { self.sticky_bottom = true; } }
 }
 
-pub async fn run(event_rx: mpsc::UnboundedReceiver<Event>, cwd: String) -> Result<()> {
+pub async fn run(
+    event_rx: mpsc::UnboundedReceiver<Event>,
+    cmd_tx: mpsc::UnboundedSender<crate::acp::TuiCommand>,
+    cwd: String,
+) -> Result<()> {
     crossterm::terminal::enable_raw_mode()?;
     let mut stdout = io::stdout();
     crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
 
-    let mut app = App::new(cwd);
+    let mut app = App::new(cwd, cmd_tx);
     let res = run_loop(&mut terminal, &mut app, event_rx).await;
 
     crossterm::terminal::disable_raw_mode()?;
@@ -181,6 +187,10 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                     app.sticky_bottom = true;
                     app.rebuild_cache();
                     app.scroll_offset = app.max_scroll();
+                    let _ = app.cmd_tx.send(crate::acp::TuiCommand::SendPrompt {
+                        session_id: String::new(),
+                        content: text,
+                    });
                 }
                 false
             }
