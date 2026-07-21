@@ -14,6 +14,7 @@ use tokio::sync::{mpsc, oneshot};
 #[derive(Debug, Clone)]
 pub enum TuiCommand {
     SendPrompt { session_id: String, content: String },
+    SetModel { model: String },
 }
 
 #[derive(Debug, Clone)]
@@ -25,6 +26,7 @@ pub enum Event {
     ToolCallUpdate { session_id: String, tool: String, status: String },
     ToolResult { session_id: String, tool: String, result: String },
     SessionCreated { session_id: String },
+    ModelList(Vec<String>),
     UsageUpdate { ctx_pct: f64, ctx_total: u64, cost: f64 },
     ConfigUpdate { model: Option<String>, provider: Option<String> },
     Error(String),
@@ -111,6 +113,14 @@ impl Client {
     pub async fn list_sessions(&mut self, cwd: Option<&str>) -> Result<Value> {
         let params = cwd.map(|dir| serde_json::json!({ "cwd": dir }));
         self.request("session/list", params).await
+    }
+
+    pub async fn set_model(&mut self, session_id: &str, model: &str) -> Result<Value> {
+        self.request("session/set_config_option", Some(serde_json::json!({
+            "sessionId": session_id,
+            "configId": "model",
+            "value": model,
+        }))).await
     }
 
     pub async fn prompt(&mut self, session_id: &str, content: &str) -> Result<Value> {

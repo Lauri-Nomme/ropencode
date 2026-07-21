@@ -42,6 +42,13 @@ fn parse_config_options(resp: &serde_json::Value, event_tx: &mpsc::UnboundedSend
                         provider: Some(parts[0].to_string()),
                     });
                 }
+                // Send available model list
+                if let Some(opts) = cfg["options"].as_array() {
+                    let models: Vec<String> = opts.iter()
+                        .filter_map(|o| o["value"].as_str().map(|s| s.to_string()))
+                        .collect();
+                    let _ = event_tx.send(acp::Event::ModelList(models));
+                }
             }
         }
     }
@@ -106,6 +113,11 @@ async fn main() -> Result<()> {
                 acp::TuiCommand::SendPrompt { content, .. } => {
                     if let Err(e) = client.prompt(&sid_for_cmd, &content).await {
                         eprintln!("prompt error: {e}");
+                    }
+                }
+                acp::TuiCommand::SetModel { model } => {
+                    if let Err(e) = client.set_model(&sid_for_cmd, &model).await {
+                        eprintln!("set_model error: {e}");
                     }
                 }
             }
