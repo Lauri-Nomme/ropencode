@@ -142,6 +142,8 @@ struct Incoming {
     method: Option<String>,
     result: Option<Value>,
     #[serde(default)]
+    error: Option<Value>,
+    #[serde(default)]
     params: Option<Value>,
 }
 
