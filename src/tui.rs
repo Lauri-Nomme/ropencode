@@ -12,7 +12,7 @@ use std::io;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-const STATUS_HEIGHT: usize = 1;
+const STATUS_HEIGHT: usize = 2;
 
 struct App {
     conversation: Conversation,
@@ -324,9 +324,13 @@ fn render_status(f: &mut Frame<'_>, area: Rect, app: &App) {
     if !cost.is_empty() { parts.push(cost); }
 
     let text = parts.join("  ·  ");
-    let block = ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::TOP);
+    let block = ratatui::widgets::Block::default()
+        .borders(ratatui::widgets::Borders::TOP)
+        .border_style(Style::default().fg(Color::DarkGray));
     f.render_widget(
-        Paragraph::new(Text::from(Line::from(Span::raw(text)))).block(block),
+        Paragraph::new(Text::from(Line::from(Span::styled(text, Style::default().fg(Color::DarkGray)))))
+            .block(block)
+            .style(Style::default().bg(Color::Rgb(20, 20, 28))),
         area,
     );
 }
