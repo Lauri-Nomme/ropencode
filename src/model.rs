@@ -20,6 +20,18 @@ pub struct Message {
     rendered: Vec<Line<'static>>,
     rendered_tools: Vec<Line<'static>>,
     pub is_thinking: bool,
+    pub time: String,
+}
+
+fn now_str() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = now.as_secs();
+    let h = (secs / 3600) % 24;
+    let m = (secs / 60) % 60;
+    let s = secs % 60;
+    format!("{h:02}:{m:02}:{s:02}")
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -67,6 +79,7 @@ impl Conversation {
             rendered,
             rendered_tools: vec![],
             is_thinking: false,
+            time: now_str(),
         });
     }
 
@@ -79,6 +92,7 @@ impl Conversation {
             rendered: vec![],
             rendered_tools: vec![],
             is_thinking: false,
+            time: now_str(),
         });
     }
 
@@ -170,16 +184,16 @@ impl Conversation {
             };
             if msg.role == Role::User {
                 out.push(Line::from(""));
-                out.push(Line::styled(" ┃ ", Style::default().fg(Color::Magenta)));
+                out.push(Line::styled(format!(" ┃ [{}]", msg.time), Style::default().fg(Color::Magenta)));
                 for l in &msg.rendered {
-                    let spans: Vec<_> = l.spans.iter().map(|s| {
+                    let mut spans = vec![ratatui::text::Span::styled(" ┃ ", Style::default().fg(Color::Magenta))];
+                    spans.extend(l.spans.iter().map(|s| {
                         ratatui::text::Span::styled(s.content.clone(), Style::default().fg(Color::Magenta))
-                    }).collect();
-                    let line = Line::from(spans);
-                    out.push(Line::from(" ┃ ").spans(line.spans));
+                    }));
+                    out.push(Line::from(spans));
                 }
             } else {
-                let label = if msg.streaming { " Assistant (streaming…)" } else { " Assistant" };
+                let label = if msg.streaming { format!(" Assistant (streaming…) [{}]", msg.time) } else { format!(" Assistant [{}]", msg.time) };
                 out.push(Line::styled(label, style));
                 for l in &msg.rendered {
                     let line = if msg.is_thinking {
@@ -192,9 +206,6 @@ impl Conversation {
             }
             for l in &msg.rendered_tools {
                 out.push(l.clone());
-            }
-            if msg.role == Role::User {
-                out.push(Line::styled(" ┃ ", Style::default().fg(Color::Magenta)));
             }
         }
         if let Some(err) = &self.error {

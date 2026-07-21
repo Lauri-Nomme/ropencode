@@ -264,6 +264,7 @@ fn parse_notification(method: &str, params: &Value) -> Option<Event> {
                     let ctx_pct = update["contextPercentage"].as_f64().or_else(|| update["usage"]["contextPercentage"].as_f64()).unwrap_or(0.0);
                     let ctx_total = update["contextTotal"].as_u64().or_else(|| update["usage"]["contextTotal"].as_u64()).unwrap_or(0);
                     let cost = update["cost"].as_f64().or_else(|| update["usage"]["cost"].as_f64()).unwrap_or(0.0);
+                    eprintln!("[usage_update] ctx={ctx_pct}% total={ctx_total} cost={cost}");
                     Some(Event::UsageUpdate { ctx_pct, ctx_total, cost })
                 }
                 "config_option_update" => {
