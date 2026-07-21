@@ -97,6 +97,10 @@ impl Conversation {
     }
 
     pub fn append_delta(&mut self, delta: &str) {
+        // If the last message is thinking, finish it and start a fresh response message
+        if self.messages.back().is_some_and(|m| m.is_thinking) {
+            self.finish_thinking();
+        }
         if self.messages.is_empty() || self.messages.back().is_some_and(|m| m.role != Role::Assistant) {
             self.start_assistant_message();
         }
@@ -112,19 +116,17 @@ impl Conversation {
     }
 
     pub fn append_thinking(&mut self, delta: &str) {
-        if self.messages.is_empty() || self.messages.back().is_some_and(|m| m.role != Role::Assistant) {
+        if self.messages.is_empty() || self.messages.back().is_some_and(|m| m.role != Role::Assistant && !m.is_thinking) {
             self.start_assistant_message();
         }
         let last = self.messages.len() - 1;
         let old_lines = self.messages[last].rendered.len();
-        self.messages[last].text.push_str(delta);
+        // Don't push_str for thinking — it's not part of the visible response text
+        // self.messages[last].text.push_str(delta);
         self.messages[last].is_thinking = true;
-        let full = self.messages[last].text.clone();
-        self.messages[last].rendered = render_text_lines(&full);
-        let new_lines = self.messages[last].rendered.len();
-        if new_lines > old_lines {
-            self.total_lines += new_lines - old_lines;
-        }
+        let rendered = render_text_lines(delta);
+        self.messages[last].rendered.extend(rendered.clone());
+        self.total_lines += rendered.len();
     }
 
     pub fn finish_thinking(&mut self) {
