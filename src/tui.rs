@@ -9,40 +9,31 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 use ratatui::{Frame, Terminal};
 use std::io;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 const STATUS_HEIGHT: usize = 2;
+const ERROR_COALESCE_MS: u64 = 600;
 
-enum Mode {
-    Normal,
-    ModelPicker { filter: String, models: Vec<String>, selected: usize },
-}
+enum Mode { Normal, ModelPicker { filter: String, models: Vec<String>, selected: usize } }
 
 struct App {
     conversation: Conversation,
-    scroll_offset: usize,
-    sticky_bottom: bool,
-    agent_busy: bool,
-    input: String,
-    mode: Mode,
-    available_models: Vec<String>,
-    viewport_height: usize,
-    cached_lines: Vec<Line<'static>>,
-    content_version: u64,
-    last_rendered_version: u64,
-    cwd: String,
-    cmd_tx: mpsc::UnboundedSender<crate::acp::TuiCommand>,
+    scroll_offset: usize, sticky_bottom: bool, agent_busy: bool,
+    input: String, mode: Mode, available_models: Vec<String>,
+    viewport_height: usize, cached_lines: Vec<Line<'static>>,
+    content_version: u64, last_rendered_version: u64,
+    cwd: String, cmd_tx: mpsc::UnboundedSender<crate::acp::TuiCommand>,
+    error_buffer: Vec<String>, last_error_flush: Option<Instant>,
 }
 
 impl App {
     fn new(cwd: String, cmd_tx: mpsc::UnboundedSender<crate::acp::TuiCommand>) -> Self {
         Self {
-            conversation: Conversation::new(),
-            scroll_offset: 0, sticky_bottom: true, agent_busy: false,
+            conversation: Conversation::new(), scroll_offset: 0, sticky_bottom: true, agent_busy: false,
             input: String::new(), mode: Mode::Normal, available_models: vec![],
             viewport_height: 0, cached_lines: vec![], content_version: 0, last_rendered_version: 0,
-            cwd, cmd_tx,
+            cwd, cmd_tx, error_buffer: vec![], last_error_flush: None,
         }
     }
 
@@ -57,7 +48,25 @@ impl App {
     fn did_scroll_up(&mut self) { self.sticky_bottom = false; }
     fn check_sticky(&mut self) { if self.is_at_bottom() { self.sticky_bottom = true; } }
 
+    fn flush_errors(&mut self) {
+        if self.error_buffer.is_empty() { return; }
+        self.conversation.error = Some(self.error_buffer.join("\n"));
+        self.error_buffer.clear();
+        self.last_error_flush = Some(Instant::now());
+        self.mark_dirty();
+        self.auto_scroll();
+    }
+
     fn handle_event(&mut self, event: Event) {
+        // Flush error buffer on non-error events or if threshold passed
+        if !matches!(event, Event::Error(_)) {
+            self.flush_errors();
+        } else if let Some(t) = self.last_error_flush {
+            if t.elapsed() >= Duration::from_millis(ERROR_COALESCE_MS) {
+                self.flush_errors();
+            }
+        }
+
         match event {
             Event::AgentTextChunk { text, .. } => { self.agent_busy = true; self.conversation.append_delta(&text); self.mark_dirty(); self.auto_scroll(); }
             Event::AgentThoughtChunk { text, .. } => { self.agent_busy = true; self.conversation.append_thinking(&text); self.mark_dirty(); self.auto_scroll(); }
@@ -69,7 +78,13 @@ impl App {
             Event::UsageUpdate { ctx_pct, ctx_total, cost } => { self.conversation.info.ctx_pct = ctx_pct; self.conversation.info.ctx_total = ctx_total; self.conversation.info.cost = cost; }
             Event::ConfigUpdate { model, provider } => { if let Some(m) = model { self.conversation.info.model = m; } if let Some(p) = provider { self.conversation.info.provider = p; } }
             Event::SessionCreated { .. } => {}
-            Event::Error(msg) => { self.conversation.error = Some(msg); self.mark_dirty(); self.auto_scroll(); }
+            Event::Error(msg) => {
+                if self.error_buffer.is_empty() {
+                    self.last_error_flush = Some(Instant::now());
+                }
+                self.error_buffer.push(msg);
+                // Don't mark dirty — we flush on next event or timeout
+            }
         }
         self.clamp_offset();
     }
@@ -84,10 +99,8 @@ pub async fn run(
     let mut stdout = io::stdout();
     crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
-
     let mut app = App::new(cwd, cmd_tx);
     let res = run_loop(&mut terminal, &mut app, event_rx).await;
-
     crossterm::terminal::disable_raw_mode()?;
     crossterm::execute!(terminal.backend_mut(), crossterm::terminal::LeaveAlternateScreen)?;
     terminal.show_cursor()?;
@@ -106,7 +119,10 @@ async fn run_loop(
         tokio::pin!(timeout);
         tokio::select! {
             evt = event_rx.recv() => { match evt { Some(evt) => app.handle_event(evt), None => break } }
-            _ = &mut timeout => { loop { match event_rx.try_recv() { Ok(evt) => app.handle_event(evt), Err(_) => break } } }
+            _ = &mut timeout => {
+                app.flush_errors();
+                loop { match event_rx.try_recv() { Ok(evt) => app.handle_event(evt), Err(_) => break } }
+            }
             crossterm_evt = poll_crossterm_event(tick_rate) => {
                 if let Some(evt) = crossterm_evt { if handle_input(app, evt) { break; } }
             }
@@ -127,9 +143,7 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                     KeyCode::Esc => { app.mode = Mode::Normal; return false; }
                     KeyCode::Enter => {
                         let f = filter.clone();
-                        let filtered: Vec<usize> = models.iter().enumerate()
-                            .filter(|(_, m)| m.contains(&f) || f.is_empty())
-                            .map(|(i, _)| i).collect();
+                        let filtered: Vec<usize> = models.iter().enumerate().filter(|(_, m)| m.contains(&f) || f.is_empty()).map(|(i, _)| i).collect();
                         if let Some(idx) = filtered.get(*selected) {
                             if let Some(model) = models.get(*idx) {
                                 let _ = app.cmd_tx.send(crate::acp::TuiCommand::SetModel { model: model.clone() });
@@ -147,12 +161,8 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                 _ => {}
             }
             let f = filter.clone();
-            let filtered: Vec<usize> = models.iter().enumerate()
-                .filter(|(_, m)| m.contains(&f) || f.is_empty())
-                .map(|(i, _)| i).collect();
-            if !filtered.is_empty() {
-                if *selected >= filtered.len() { *selected = filtered.len() - 1; }
-            }
+            let filtered_len = models.iter().filter(|m| m.contains(&f) || f.is_empty()).count();
+            if *selected >= filtered_len && filtered_len > 0 { *selected = filtered_len - 1; }
             return false;
         }
         Mode::Normal => {}
@@ -161,27 +171,19 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
     match evt {
         TermEvent::Key(key) if key.kind == KeyEventKind::Press => match key.code {
             KeyCode::Enter => {
+                app.flush_errors();
                 let text = app.input.trim().to_string();
                 if text == "/exit" { return true; }
                 if text.starts_with("/model") {
-                    app.mode = Mode::ModelPicker {
-                        filter: String::new(),
-                        models: app.available_models.clone(),
-                        selected: 0,
-                    };
+                    app.mode = Mode::ModelPicker { filter: String::new(), models: app.available_models.clone(), selected: 0 };
                     app.input.clear();
                     return false;
                 }
                 if !text.is_empty() {
-                    app.conversation.add_user_message(&text);
-                    app.mark_dirty();
-                    app.input.clear();
-                    app.sticky_bottom = true;
-                    app.rebuild_cache();
-                    app.scroll_offset = app.max_scroll();
-                    let _ = app.cmd_tx.send(crate::acp::TuiCommand::SendPrompt {
-                        session_id: String::new(), content: text,
-                    });
+                    app.conversation.add_user_message(&text); app.mark_dirty();
+                    app.input.clear(); app.sticky_bottom = true;
+                    app.rebuild_cache(); app.scroll_offset = app.max_scroll();
+                    let _ = app.cmd_tx.send(crate::acp::TuiCommand::SendPrompt { session_id: String::new(), content: text });
                 }
                 false
             }
@@ -200,7 +202,7 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
             KeyCode::PageDown => { let vh = app.viewport_height.max(1); let max = app.max_scroll(); app.scroll_offset = (app.scroll_offset + vh).min(max); app.check_sticky(); false }
             KeyCode::Home => { app.scroll_offset = 0; app.did_scroll_up(); false }
             KeyCode::End => { app.scroll_offset = app.max_scroll(); app.sticky_bottom = true; false }
-            KeyCode::Char(ch) => { app.input.push(ch); false }
+            KeyCode::Char(c) => { app.input.push(c); false }
             _ => false,
         },
         TermEvent::Mouse(mev) => match mev.kind {
@@ -208,13 +210,7 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
             MouseEventKind::ScrollUp => { app.scroll_offset = app.scroll_offset.saturating_sub(3); app.did_scroll_up(); false }
             _ => false,
         },
-        TermEvent::Resize(_, h) => {
-            let convo_h = (h as usize).saturating_sub(STATUS_HEIGHT + 3);
-            app.viewport_height = convo_h;
-            app.clamp_offset();
-            if app.sticky_bottom { app.scroll_offset = app.max_scroll(); }
-            false
-        }
+        TermEvent::Resize(_, h) => { app.viewport_height = (h as usize).saturating_sub(STATUS_HEIGHT + 3); app.clamp_offset(); if app.sticky_bottom { app.scroll_offset = app.max_scroll(); } false }
         _ => false,
     }
 }
@@ -222,35 +218,31 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
 fn render(f: &mut Frame<'_>, app: &mut App) {
     let area = f.area();
     if area.width == 0 || area.height == 0 { return; }
-
-    let total_h = area.height as usize;
-    let convo_h = total_h.saturating_sub(STATUS_HEIGHT + 3);
-
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
+    let convo_h = (area.height as usize).saturating_sub(STATUS_HEIGHT + 3);
+    let chunks = Layout::default().direction(Direction::Vertical)
         .constraints([Constraint::Length(convo_h as u16), Constraint::Length(3), Constraint::Length(STATUS_HEIGHT as u16)])
         .split(area);
-
     app.viewport_height = chunks[0].height as usize;
-    app.ensure_cache();
-    app.clamp_offset();
-
+    app.ensure_cache(); app.clamp_offset();
     render_conversation(f, chunks[0], app);
     render_input(f, chunks[1], app);
     render_status(f, chunks[2], app);
-
-    // Model picker overlay
     if let Mode::ModelPicker { filter, models, selected } = &app.mode {
         render_model_picker(f, area, filter.as_str(), models, *selected);
+    }
+    // Flush stale error buffer on render tick
+    if !app.error_buffer.is_empty() {
+        if let Some(t) = app.last_error_flush {
+            if t.elapsed() >= Duration::from_millis(ERROR_COALESCE_MS) { app.flush_errors(); }
+        }
     }
 }
 
 fn render_conversation(f: &mut Frame<'_>, area: Rect, app: &App) {
     let total = app.cached_lines.len();
     let offset = app.scroll_offset.min(total.saturating_sub(1));
-    let vh = area.height as usize;
     let start = offset;
-    let end = (start + vh).min(total);
+    let end = (start + area.height as usize).min(total);
     let mut lines: Vec<Line<'static>> = if start < total { app.cached_lines[start..end].to_vec() } else { vec![] };
     if app.agent_busy && !app.conversation.messages.back().is_some_and(|m| m.streaming) {
         lines.push(Line::styled(" ● thinking…", Style::default().fg(Color::Yellow)));
@@ -264,9 +256,7 @@ fn render_input(f: &mut Frame<'_>, area: Rect, app: &App) {
     let block = Block::default().borders(Borders::TOP).title(" Prompt (Enter send, /exit quit, /model select)");
     let text = if app.input.is_empty() {
         Text::from(Line::from(Span::styled("Type your message…", Style::default().fg(Color::DarkGray))))
-    } else {
-        Text::from(Line::from(Span::raw(&app.input)))
-    };
+    } else { Text::from(Line::from(Span::raw(&app.input))) };
     f.render_widget(Paragraph::new(text).block(block), area);
 }
 
@@ -280,38 +270,31 @@ fn render_status(f: &mut Frame<'_>, area: Rect, app: &App) {
     let mut parts = vec![model_label, cwd];
     if !ctx.is_empty() { parts.push(ctx); }
     if !cost.is_empty() { parts.push(cost); }
-    let block = Block::default().borders(Borders::TOP).border_style(Style::default().fg(Color::DarkGray));
     f.render_widget(
         Paragraph::new(Text::from(Line::from(Span::styled(parts.join("  ·  "), Style::default().fg(Color::DarkGray)))))
-            .block(block).style(Style::default().bg(Color::Rgb(20, 20, 28))),
+            .block(Block::default().borders(Borders::TOP).border_style(Style::default().fg(Color::DarkGray)))
+            .style(Style::default().bg(Color::Rgb(20, 20, 28))),
         area,
     );
 }
 
 fn render_model_picker(f: &mut Frame<'_>, area: Rect, filter: &str, models: &[String], selected: usize) {
-    let filtered: Vec<(usize, &String)> = models.iter().enumerate()
-        .filter(|(_, m)| m.contains(filter) || filter.is_empty())
-        .collect();
+    let filtered: Vec<(usize, &String)> = models.iter().enumerate().filter(|(_, m)| m.contains(filter) || filter.is_empty()).collect();
     let max_h = (area.height / 2).min(20) as usize;
     let picker_h = (filtered.len() + 3).min(max_h).max(4) as u16;
     let picker_w = area.width.saturating_sub(4).min(70);
     let x = (area.width - picker_w) / 2;
     let y = (area.height - picker_h) / 2;
     let picker_area = Rect::new(x, y, picker_w, picker_h);
-
     let sel = selected.min(filtered.len().saturating_sub(1));
-    let mut lines: Vec<Line<'static>> = vec![
+    let mut lines = vec![
         Line::from(Span::styled(" Select Model", Style::default().fg(Color::Cyan).bg(Color::Rgb(20, 20, 28)))),
         Line::from(Span::styled(format!(" Filter: {filter}"), Style::default().fg(Color::DarkGray).bg(Color::Rgb(20, 20, 28)))),
     ];
     for (i, (_, model)) in filtered.iter().enumerate() {
         let marker = if i == sel { " ▸" } else { "  " };
         let style = if i == sel { Style::default().fg(Color::Cyan).bg(Color::Rgb(40, 40, 60)) } else { Style::default().bg(Color::Rgb(20, 20, 28)) };
-        let label = if model.len() > (picker_w as usize).saturating_sub(4) {
-            format!("{}…", &model[..(picker_w as usize).saturating_sub(5)])
-        } else {
-            model.to_string()
-        };
+        let label = if model.len() > (picker_w as usize).saturating_sub(4) { format!("{}…", &model[..(picker_w as usize).saturating_sub(5)]) } else { model.to_string() };
         lines.push(Line::styled(format!("{marker} {label}"), style));
     }
     lines.push(Line::from(Span::styled(" Esc cancel · Enter select", Style::default().fg(Color::DarkGray).bg(Color::Rgb(20, 20, 28)))));
