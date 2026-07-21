@@ -116,10 +116,7 @@ impl Client {
     pub async fn prompt(&mut self, session_id: &str, content: &str) -> Result<Value> {
         self.request("session/prompt", Some(serde_json::json!({
             "sessionId": session_id,
-            "messages": [{
-                "role": "user",
-                "content": [{"type": "text", "text": content}],
-            }],
+            "prompt": [{"type": "text", "text": content}],
         }))).await
     }
 }
