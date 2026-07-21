@@ -264,14 +264,20 @@ fn render_status(f: &mut Frame<'_>, area: Rect, app: &App) {
     let info = &app.conversation.info;
     let ctx = if info.ctx_total > 0 { format!("ctx {:.0}%", info.ctx_pct) } else { String::new() };
     let cost = if info.cost > 0.0 { format!("${:.4}", info.cost) } else { String::new() };
+    let right = [&ctx, &cost].into_iter().filter(|s| !s.is_empty()).cloned().collect::<Vec<_>>().join("  ");
+    let right_w = right.len() + if right.is_empty() { 0 } else { 2 };
+
     let model_label = if info.provider != "—" { format!("{}/{}", info.provider, info.model) } else { info.model.clone() };
-    let cwd_w = (area.width as usize).saturating_sub(model_label.len() + ctx.len() + cost.len() + 6);
+    let cwd_w = (area.width as usize).saturating_sub(model_label.len() + right_w + 4);
     let cwd = if app.cwd.len() > cwd_w && cwd_w > 5 { format!("…{}", &app.cwd[app.cwd.len().saturating_sub(cwd_w - 1)..]) } else { app.cwd.clone() };
-    let mut parts = vec![model_label, cwd];
-    if !ctx.is_empty() { parts.push(ctx); }
-    if !cost.is_empty() { parts.push(cost); }
+
+    // Pad with spaces so right-side content is right-aligned
+    let left = format!("{model_label}  ·  {cwd}");
+    let pad = (area.width as usize).saturating_sub(left.len() + right.len());
+    let line = format!("{left}{}{right}", " ".repeat(pad));
+
     f.render_widget(
-        Paragraph::new(Text::from(Line::from(Span::styled(parts.join("  ·  "), Style::default().fg(Color::DarkGray)))))
+        Paragraph::new(Text::from(Line::from(Span::styled(line, Style::default().fg(Color::DarkGray)))))
             .block(Block::default().borders(Borders::TOP).border_style(Style::default().fg(Color::DarkGray)))
             .style(Style::default().bg(Color::Rgb(20, 20, 28))),
         area,

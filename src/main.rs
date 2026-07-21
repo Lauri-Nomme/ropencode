@@ -116,8 +116,9 @@ async fn main() -> Result<()> {
             }
             match cmd {
                 acp::TuiCommand::SendPrompt { content, .. } => {
+                    eprintln!("[ropencode] Sending prompt: {content:.50}");
                     match client.prompt(&sid_for_cmd, &content).await {
-                        Ok(_) => {}
+                        Ok(_) => { eprintln!("[ropencode] Prompt completed"); }
                         Err(e) => {
                             // Extract user-friendly message from ACP error response
                             let err_val = format!("{e}");
