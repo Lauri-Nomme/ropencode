@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 const STATUS_HEIGHT: usize = 2;
 const ERROR_COALESCE_MS: u64 = 600;
 
-enum Mode { Normal, ModelPicker { filter: String, models: Vec<String>, selected: usize, scroll: usize } }
+enum Mode { Normal, ModelPicker { filter: String, models: Vec<String>, selected: usize, scroll: usize }, Help }
 
 struct App {
     conversation: Conversation,
@@ -167,6 +167,13 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
             if *selected >= filtered_len && filtered_len > 0 { *selected = filtered_len - 1; }
             return false;
         }
+        Mode::Help => match evt {
+            TermEvent::Key(key) if key.kind == KeyEventKind::Press => match key.code {
+                KeyCode::Esc | KeyCode::Enter => { app.mode = Mode::Normal; }
+                _ => {}
+            }
+            _ => {}
+        },
         Mode::Normal => {}
     }
 
@@ -178,6 +185,11 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                 if text == "/exit" { return true; }
                 if text.starts_with("/model") {
                     app.mode = Mode::ModelPicker { filter: String::new(), models: app.available_models.clone(), selected: 0, scroll: 0 };
+                    app.input.clear();
+                    return false;
+                }
+                if text == "/help" {
+                    app.mode = Mode::Help;
                     app.input.clear();
                     return false;
                 }
@@ -237,6 +249,9 @@ fn render(f: &mut Frame<'_>, app: &mut App) {
     if let Mode::ModelPicker { filter, models, selected, scroll: _ } = &app.mode {
         render_model_picker(f, area, filter.as_str(), models, *selected);
     }
+    if let Mode::Help = &app.mode {
+        render_help(f, area);
+    }
     // Flush stale error buffer on render tick
     if !app.error_buffer.is_empty() {
         if let Some(t) = app.last_error_flush {
@@ -260,7 +275,7 @@ fn render_conversation(f: &mut Frame<'_>, area: Rect, app: &App) {
 }
 
 fn render_input(f: &mut Frame<'_>, area: Rect, app: &App) {
-    let block = Block::default().borders(Borders::TOP).title(" Prompt (Enter send, /exit quit, /model select)");
+    let block = Block::default().borders(Borders::TOP).title(" Prompt (Enter send · /help · /model · /exit)");
     let text = if app.input.is_empty() {
         Text::from(Line::from(Span::styled("Type your message…", Style::default().fg(Color::DarkGray))))
     } else { Text::from(Line::from(Span::raw(&app.input))) };
@@ -288,6 +303,34 @@ fn render_status(f: &mut Frame<'_>, area: Rect, app: &App) {
             .block(Block::default().borders(Borders::TOP).border_style(Style::default().fg(Color::DarkGray)))
             .style(Style::default().bg(Color::Rgb(20, 20, 28))),
         area,
+    );
+}
+
+fn render_help(f: &mut Frame<'_>, area: Rect) {
+    let w = area.width.saturating_sub(4).min(60);
+    let h = 18u16;
+    let x = (area.width - w) / 2;
+    let y = (area.height - h) / 2;
+    let lines = vec![
+        Line::from(Span::styled(" Commands", Style::default().fg(Color::Cyan))),
+        Line::from(Span::raw("")),
+        Line::from(Span::styled("  /help       Show this help screen", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled("  /model      Open model picker", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled("  /exit       Quit", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::raw("")),
+        Line::from(Span::styled(" Keybindings", Style::default().fg(Color::Cyan))),
+        Line::from(Span::raw("")),
+        Line::from(Span::styled("  ↑/↓         Scroll conversation", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled("  PgUp/PgDn   Page scroll", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled("  Home/End    Jump to top/bottom", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled("  Tab         Expand/collapse tool output", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled("  Esc         Close overlays", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::raw("")),
+        Line::from(Span::styled(" Press Esc or Enter to close", Style::default().fg(Color::DarkGray))),
+    ];
+    f.render_widget(
+        Paragraph::new(Text::from(lines)).block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan))),
+        Rect::new(x, y, w, h),
     );
 }
 
