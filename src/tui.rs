@@ -28,6 +28,7 @@ struct App {
     error_buffer: Vec<String>, last_error_flush: Option<Instant>,
     tab_tool_idx: usize, frame: u64,
     theme: Theme,
+    stream_buffer: String,
 }
 
 impl App {
@@ -38,6 +39,7 @@ impl App {
             viewport_height: 0, cached_lines: vec![], content_version: 0, last_rendered_version: 0,
             cwd, cmd_tx, error_buffer: vec![], last_error_flush: None,
             tab_tool_idx: 0, frame: 0, theme,
+            stream_buffer: String::new(),
         }
     }
 
@@ -51,6 +53,14 @@ impl App {
     fn auto_scroll(&mut self) { self.rebuild_cache(); if self.sticky_bottom { self.scroll_offset = self.max_scroll(); } }
     fn did_scroll_up(&mut self) { self.sticky_bottom = false; }
     fn check_sticky(&mut self) { if self.is_at_bottom() { self.sticky_bottom = true; } }
+
+    fn flush_stream_buffer(&mut self) {
+        if self.stream_buffer.is_empty() { return; }
+        let text = std::mem::take(&mut self.stream_buffer);
+        self.conversation.append_delta(&text);
+        self.mark_dirty();
+        self.auto_scroll();
+    }
 
     fn flush_errors(&mut self) {
         if self.error_buffer.is_empty() { return; }
@@ -72,9 +82,9 @@ impl App {
         }
 
         match event {
-            Event::AgentTextChunk { text, .. } => { self.agent_busy = true; self.conversation.append_delta(&text); self.mark_dirty(); self.auto_scroll(); }
+            Event::AgentTextChunk { text, .. } => { self.agent_busy = true; self.stream_buffer.push_str(&text); }
             Event::AgentThoughtChunk { text, .. } => { self.agent_busy = true; self.conversation.append_thinking(&text); self.mark_dirty(); self.auto_scroll(); }
-            Event::AgentTextDone { .. } => { self.agent_busy = false; self.conversation.finish_thinking(); self.mark_dirty(); self.auto_scroll(); }
+            Event::AgentTextDone { .. } => { self.agent_busy = false; self.flush_stream_buffer(); self.conversation.finish_thinking(); self.mark_dirty(); self.auto_scroll(); }
             Event::UserMessage { text, .. } => { self.conversation.add_user_message(&text); self.mark_dirty(); self.sticky_bottom = true; self.auto_scroll(); }
             Event::ToolCallUpdate { tool, status, .. } => { self.conversation.add_tool_call(&tool, &status); self.mark_dirty(); self.auto_scroll(); }
             Event::ToolResult { tool, result, .. } => { self.conversation.complete_tool_call(&tool, &result); self.mark_dirty(); self.auto_scroll(); }
@@ -276,6 +286,7 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
             KeyCode::Char(c) if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) && c == 'c' => {
                 if app.agent_busy {
                     app.agent_busy = false;
+                    app.flush_stream_buffer();
                     app.conversation.finish_thinking();
                     let msg = "─ cancelled ─";
                     app.conversation.add_user_message(msg);
@@ -299,6 +310,7 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
 
 fn render(f: &mut Frame<'_>, app: &mut App) {
     app.frame += 1;
+    app.flush_stream_buffer();
     let area = f.area();
     if area.width == 0 || area.height == 0 { return; }
     let convo_h = (area.height as usize).saturating_sub(STATUS_HEIGHT + 3);
