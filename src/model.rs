@@ -225,7 +225,10 @@ impl Conversation {
 }
 
 fn render_text_lines(text: &str) -> Vec<Line<'static>> {
-    let text = tui_markdown::from_str(text);
+    let md = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tui_markdown::from_str(text)));
+    let Ok(text) = md else {
+        return vec![Line::from(ratatui::text::Span::raw(text.to_string()))];
+    };
     let mut out = Vec::new();
     for line in text.lines.iter() {
         let owned: Vec<_> = line.spans.iter().map(|s| {
