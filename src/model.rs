@@ -53,11 +53,12 @@ pub struct Conversation {
     pub total_lines: usize,
     pub info: SessionInfo,
     pub error: Option<String>,
+    thinking_msg_idx: Option<usize>,
 }
 
 impl Conversation {
     pub fn new() -> Self {
-        Self { messages: VecDeque::new(), total_lines: 0, info: SessionInfo::default(), error: None }
+        Self { messages: VecDeque::new(), total_lines: 0, info: SessionInfo::default(), error: None, thinking_msg_idx: None }
     }
 
     pub fn add_user_message(&mut self, text: &str) {
@@ -109,13 +110,11 @@ impl Conversation {
     }
 
     pub fn append_thinking(&mut self, delta: &str) {
-        if self.messages.is_empty() || self.messages.back().is_some_and(|m| m.role != Role::Assistant && !m.is_thinking) {
+        if self.thinking_msg_idx.is_none() {
             self.start_assistant_message();
+            self.thinking_msg_idx = Some(self.messages.len() - 1);
         }
-        let last = self.messages.len() - 1;
-        let old_lines = self.messages[last].rendered.len();
-        // Don't push_str for thinking — it's not part of the visible response text
-        // self.messages[last].text.push_str(delta);
+        let last = self.thinking_msg_idx.unwrap();
         self.messages[last].is_thinking = true;
         let rendered = render_text_lines(delta);
         self.messages[last].rendered.extend(rendered.clone());
@@ -123,8 +122,10 @@ impl Conversation {
     }
 
     pub fn finish_thinking(&mut self) {
-        if let Some(msg) = self.messages.iter_mut().rev().find(|m| m.is_thinking) {
-            msg.is_thinking = false;
+        if let Some(idx) = self.thinking_msg_idx.take() {
+            if let Some(msg) = self.messages.get_mut(idx) {
+                msg.is_thinking = false;
+            }
         }
     }
 
