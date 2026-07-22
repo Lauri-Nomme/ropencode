@@ -1,4 +1,5 @@
 mod acp;
+mod config;
 mod model;
 mod tui;
 
@@ -149,5 +150,6 @@ async fn main() -> Result<()> {
         }
     });
 
-    tui::run(event_rx, cmd_tx.clone(), cwd).await
+    let cfg = config::Config::load();
+    tui::run(event_rx, cmd_tx.clone(), cwd, cfg.theme).await
 }

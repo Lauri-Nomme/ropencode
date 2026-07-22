@@ -1,4 +1,5 @@
 use crate::acp::Event;
+use crate::config::Theme;
 use crate::model::Conversation;
 use anyhow::Result;
 use crossterm::event::{self, Event as TermEvent, KeyCode, KeyEventKind, MouseEventKind};
@@ -26,16 +27,17 @@ struct App {
     cwd: String, cmd_tx: mpsc::UnboundedSender<crate::acp::TuiCommand>,
     error_buffer: Vec<String>, last_error_flush: Option<Instant>,
     tab_tool_idx: usize, frame: u64,
+    theme: Theme,
 }
 
 impl App {
-    fn new(cwd: String, cmd_tx: mpsc::UnboundedSender<crate::acp::TuiCommand>) -> Self {
+    fn new(cwd: String, cmd_tx: mpsc::UnboundedSender<crate::acp::TuiCommand>, theme: Theme) -> Self {
         Self {
             conversation: Conversation::new(), scroll_offset: 0, sticky_bottom: true, agent_busy: false,
             input: String::new(), mode: Mode::Normal, available_models: vec![],
             viewport_height: 0, cached_lines: vec![], content_version: 0, last_rendered_version: 0,
             cwd, cmd_tx, error_buffer: vec![], last_error_flush: None,
-            tab_tool_idx: 0, frame: 0,
+            tab_tool_idx: 0, frame: 0, theme,
         }
     }
 
@@ -96,12 +98,13 @@ pub async fn run(
     event_rx: mpsc::UnboundedReceiver<Event>,
     cmd_tx: mpsc::UnboundedSender<crate::acp::TuiCommand>,
     cwd: String,
+    theme: Theme,
 ) -> Result<()> {
     crossterm::terminal::enable_raw_mode()?;
     let mut stdout = io::stdout();
     crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
-    let mut app = App::new(cwd, cmd_tx);
+    let mut app = App::new(cwd, cmd_tx, theme);
     let res = run_loop(&mut terminal, &mut app, event_rx).await;
     crossterm::terminal::disable_raw_mode()?;
     crossterm::execute!(terminal.backend_mut(), crossterm::terminal::LeaveAlternateScreen)?;
@@ -268,10 +271,10 @@ fn render(f: &mut Frame<'_>, app: &mut App) {
         } else {
             app.conversation.info.model.clone()
         };
-        render_model_picker(f, area, filter.as_str(), models, *selected, &current_model);
+        render_model_picker(f, area, filter.as_str(), models, *selected, &current_model, app);
     }
     if let Mode::Help = &app.mode {
-        render_help(f, area);
+        render_help(f, area, app);
     }
     // Flush stale error buffer on render tick
     if !app.error_buffer.is_empty() {
@@ -300,19 +303,19 @@ fn render_conversation(f: &mut Frame<'_>, area: Rect, app: &App) {
 fn render_input(f: &mut Frame<'_>, area: Rect, app: &App) {
     let block = Block::default().borders(Borders::TOP).title(" Prompt (Enter send · Alt+Enter newline · /help · /model · /exit)");
     let text = if app.input.is_empty() {
-        Text::from(Line::from(Span::styled("Type your message…", Style::default().fg(Color::DarkGray))))
+        Text::from(Line::from(Span::styled("Type your message…", Style::default().fg(app.theme.thinking_color))))
     } else { Text::from(Line::from(Span::raw(&app.input))) };
     f.render_widget(Paragraph::new(text).block(block), area);
 }
 
 fn render_status(f: &mut Frame<'_>, area: Rect, app: &App) {
     let info = &app.conversation.info;
-    let ctx_color = if info.ctx_pct >= 90.0 { Color::Red } else if info.ctx_pct >= 70.0 { Color::Yellow } else { Color::DarkGray };
+    let ctx_color = if info.ctx_pct >= 90.0 { app.theme.error_color } else if info.ctx_pct >= 70.0 { Color::Yellow } else { app.theme.thinking_color };
     let ctx_span = if info.ctx_total > 0 {
         Some(Span::styled(format!("ctx {:.0}%", info.ctx_pct), Style::default().fg(ctx_color)))
     } else { None };
     let cost_span = if info.cost > 0.0 {
-        Some(Span::styled(format!("${:.4}", info.cost), Style::default().fg(Color::DarkGray)))
+        Some(Span::styled(format!("${:.4}", info.cost), Style::default().fg(app.theme.thinking_color)))
     } else { None };
     let right_spans: Vec<Span> = [ctx_span, cost_span].into_iter().flatten().collect();
     let right_w: usize = right_spans.iter().map(|s| s.content.len()).sum::<usize>() + if right_spans.is_empty() { 0 } else { 2 };
@@ -324,50 +327,52 @@ fn render_status(f: &mut Frame<'_>, area: Rect, app: &App) {
     let left = format!("{model_label}  ·  {cwd}");
     let pad = (area.width as usize).saturating_sub(left.len() + right_w);
 
-    let mut spans = vec![Span::styled(left, Style::default().fg(Color::DarkGray))];
+    let mut spans = vec![Span::styled(left, Style::default().fg(app.theme.thinking_color))];
     if pad > 0 { spans.push(Span::raw(" ".repeat(pad))); }
     spans.extend(right_spans);
 
     f.render_widget(
         Paragraph::new(Text::from(Line::from(spans)))
-            .block(Block::default().borders(Borders::TOP).border_style(Style::default().fg(Color::DarkGray)))
-            .style(Style::default().bg(Color::Rgb(20, 20, 28))),
+            .block(Block::default().borders(Borders::TOP).border_style(Style::default().fg(app.theme.thinking_color)))
+            .style(Style::default().bg(app.theme.status_bar_bg)),
         area,
     );
 }
 
-fn render_help(f: &mut Frame<'_>, area: Rect) {
+fn render_help(f: &mut Frame<'_>, area: Rect, app: &App) {
     let w = area.width.saturating_sub(4).min(60);
     let h = 18u16;
     let x = (area.width - w) / 2;
     let y = (area.height - h) / 2;
+    let t = &app.theme;
     let lines = vec![
-        Line::from(Span::styled(" Commands", Style::default().fg(Color::Cyan))),
+        Line::from(Span::styled(" Commands", Style::default().fg(t.accent_color))),
         Line::from(Span::raw("")),
-        Line::from(Span::styled("  /help       Show this help screen", Style::default().fg(Color::DarkGray))),
-        Line::from(Span::styled("  /model      Open model picker", Style::default().fg(Color::DarkGray))),
-        Line::from(Span::styled("  /exit       Quit", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled("  /help       Show this help screen", Style::default().fg(t.thinking_color))),
+        Line::from(Span::styled("  /model      Open model picker", Style::default().fg(t.thinking_color))),
+        Line::from(Span::styled("  /exit       Quit", Style::default().fg(t.thinking_color))),
         Line::from(Span::raw("")),
-        Line::from(Span::styled(" Keybindings", Style::default().fg(Color::Cyan))),
+        Line::from(Span::styled(" Keybindings", Style::default().fg(t.accent_color))),
         Line::from(Span::raw("")),
-        Line::from(Span::styled("  ↑/↓         Scroll conversation", Style::default().fg(Color::DarkGray))),
-        Line::from(Span::styled("  PgUp/PgDn   Page scroll", Style::default().fg(Color::DarkGray))),
-        Line::from(Span::styled("  Home/End    Jump to top/bottom", Style::default().fg(Color::DarkGray))),
-        Line::from(Span::styled("  Tab         Expand/collapse tool output", Style::default().fg(Color::DarkGray))),
-        Line::from(Span::styled("  Esc         Close overlays", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled("  ↑/↓         Scroll conversation", Style::default().fg(t.thinking_color))),
+        Line::from(Span::styled("  PgUp/PgDn   Page scroll", Style::default().fg(t.thinking_color))),
+        Line::from(Span::styled("  Home/End    Jump to top/bottom", Style::default().fg(t.thinking_color))),
+        Line::from(Span::styled("  Tab         Expand/collapse tool output", Style::default().fg(t.thinking_color))),
+        Line::from(Span::styled("  Esc         Close overlays", Style::default().fg(t.thinking_color))),
         Line::from(Span::raw("")),
-        Line::from(Span::styled(" Press Esc or Enter to close", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled(" Press Esc or Enter to close", Style::default().fg(t.thinking_color))),
     ];
     f.render_widget(
-        Paragraph::new(Text::from(lines)).block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan))),
+        Paragraph::new(Text::from(lines)).block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(t.accent_color))),
         Rect::new(x, y, w, h),
     );
 }
 
-fn render_model_picker(f: &mut Frame<'_>, area: Rect, filter: &str, models: &[String], selected: usize, current_model: &str) {
+fn render_model_picker(f: &mut Frame<'_>, area: Rect, filter: &str, models: &[String], selected: usize, current_model: &str, app: &App) {
+    let t = &app.theme;
     let filtered: Vec<(usize, &String)> = models.iter().enumerate().filter(|(_, m)| m.contains(filter) || filter.is_empty()).collect();
     let view_h = ((area.height / 2).min(20) as usize).max(4);
-    let list_h = view_h.saturating_sub(3); // header + filter + footer
+    let list_h = view_h.saturating_sub(3);
     let picker_h = view_h as u16;
     let picker_w = area.width.saturating_sub(4).min(70);
     let x = (area.width - picker_w) / 2;
@@ -375,28 +380,27 @@ fn render_model_picker(f: &mut Frame<'_>, area: Rect, filter: &str, models: &[St
     let picker_area = Rect::new(x, y, picker_w, picker_h);
 
     let sel = selected.min(filtered.len().saturating_sub(1));
-    // Scroll offset: keep selected centered in the list viewport
     let scroll = if filtered.len() <= list_h { 0 }
         else { sel.saturating_sub(list_h / 2).min(filtered.len().saturating_sub(list_h)) };
 
     let mut lines = vec![
-        Line::from(Span::styled(" Select Model", Style::default().fg(Color::Cyan).bg(Color::Rgb(20, 20, 28)))),
-        Line::from(Span::styled(format!(" Filter: {filter}"), Style::default().fg(Color::DarkGray).bg(Color::Rgb(20, 20, 28)))),
+        Line::from(Span::styled(" Select Model", Style::default().fg(t.accent_color).bg(t.status_bar_bg))),
+        Line::from(Span::styled(format!(" Filter: {filter}"), Style::default().fg(t.thinking_color).bg(t.status_bar_bg))),
     ];
     let visible_range = scroll..(scroll + list_h).min(filtered.len());
     for i in visible_range {
         let (_, model) = &filtered[i];
         let marker = if i == sel { " ▸" } else { "  " };
-        let style = if i == sel { Style::default().fg(Color::Cyan).bg(Color::Rgb(40, 40, 60)) } else { Style::default().bg(Color::Rgb(20, 20, 28)) };
+        let style = if i == sel { Style::default().fg(t.accent_color).bg(t.selection_bg) } else { Style::default().bg(t.status_bar_bg) };
         let is_active = !current_model.is_empty() && model.as_str() == current_model;
         let suffix = if is_active { "  ← active" } else { "" };
         let label = if model.len() + suffix.len() > (picker_w as usize).saturating_sub(4) { format!("{}…", &model[..(picker_w as usize).saturating_sub(5 + suffix.len()).max(5)]) } else { model.to_string() };
         let style = if is_active && i != sel { style.fg(Color::Green) } else { style };
         lines.push(Line::styled(format!("{marker} {label}{suffix}"), style));
     }
-    lines.push(Line::from(Span::styled(" Esc cancel · Enter select", Style::default().fg(Color::DarkGray).bg(Color::Rgb(20, 20, 28)))));
+    lines.push(Line::from(Span::styled(" Esc cancel · Enter select", Style::default().fg(t.thinking_color).bg(t.status_bar_bg))));
     f.render_widget(
-        Paragraph::new(Text::from(lines)).block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan))),
+        Paragraph::new(Text::from(lines)).block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(t.accent_color))),
         picker_area,
     );
 }
