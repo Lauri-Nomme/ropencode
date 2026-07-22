@@ -183,7 +183,7 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                     app.conversation.add_user_message(&text); app.mark_dirty();
                     app.input.clear(); app.sticky_bottom = true;
                     app.rebuild_cache(); app.scroll_offset = app.max_scroll();
-                    let _ = app.cmd_tx.send(crate::acp::TuiCommand::SendPrompt { session_id: String::new(), content: text });
+                    let _ = app.cmd_tx.send(crate::acp::TuiCommand::SendPrompt { content: text });
                 }
                 false
             }

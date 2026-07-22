@@ -13,7 +13,7 @@ use tokio::sync::{mpsc, oneshot};
 
 #[derive(Debug, Clone)]
 pub enum TuiCommand {
-    SendPrompt { session_id: String, content: String },
+    SendPrompt { content: String },
     SetModel { model: String },
 }
 
