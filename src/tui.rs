@@ -16,7 +16,7 @@ use tokio::sync::mpsc;
 const STATUS_HEIGHT: usize = 2;
 const ERROR_COALESCE_MS: u64 = 600;
 
-enum Mode { Normal, ModelPicker { filter: String, models: Vec<String>, selected: usize, scroll: usize }, Help }
+enum Mode { Normal, ModelPicker { filter: String, models: Vec<String>, selected: usize, scroll: usize }, Help, SessionPicker { filter: String, sessions: Vec<crate::acp::SessionEntry>, selected: usize, scroll: usize } }
 
 struct App {
     conversation: Conversation,
@@ -79,6 +79,9 @@ impl App {
             Event::ToolCallUpdate { tool, status, .. } => { self.conversation.add_tool_call(&tool, &status); self.mark_dirty(); self.auto_scroll(); }
             Event::ToolResult { tool, result, .. } => { self.conversation.complete_tool_call(&tool, &result); self.mark_dirty(); self.auto_scroll(); }
             Event::ModelList(models) => { self.available_models = models; }
+            Event::SessionList(sessions) => {
+                self.mode = Mode::SessionPicker { filter: String::new(), sessions, selected: 0, scroll: 0 };
+            }
             Event::UsageUpdate { ctx_pct, ctx_total, cost } => { self.conversation.info.ctx_pct = ctx_pct; self.conversation.info.ctx_total = ctx_total; self.conversation.info.cost = cost; }
             Event::ConfigUpdate { model, provider } => { if let Some(m) = model { self.conversation.info.model = m; } if let Some(p) = provider { self.conversation.info.provider = p; } }
             Event::SessionCreated { .. } => {}
@@ -170,6 +173,43 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
             if *selected >= filtered_len && filtered_len > 0 { *selected = filtered_len - 1; }
             return false;
         }
+        Mode::SessionPicker { filter, sessions, selected, .. } => {
+            match evt {
+                TermEvent::Key(key) if key.kind == KeyEventKind::Press => match key.code {
+                    KeyCode::Esc => { app.mode = Mode::Normal; return false; }
+                    KeyCode::Enter => {
+                        let f = filter.clone();
+                        let sid = {
+                            let filtered: Vec<usize> = sessions.iter().enumerate().filter(|(_, s)| s.title.contains(&f) || s.session_id.contains(&f) || f.is_empty()).map(|(i, _)| i).collect();
+                            filtered.get(*selected).and_then(|idx| sessions.get(*idx)).map(|entry| entry.session_id.clone())
+                        };
+                        if let Some(session_id) = sid {
+                            app.conversation = Conversation::new();
+                            app.conversation.info.cwd = app.cwd.clone();
+                            app.content_version = 0;
+                            app.cached_lines.clear();
+                            let _ = app.cmd_tx.send(crate::acp::TuiCommand::LoadSession {
+                                session_id,
+                                cwd: app.cwd.clone(),
+                            });
+                        }
+                        app.mode = Mode::Normal;
+                        app.sticky_bottom = true;
+                        return false;
+                    }
+                    KeyCode::Up => { *selected = selected.saturating_sub(1); }
+                    KeyCode::Down => { *selected = selected.saturating_add(1); }
+                    KeyCode::Backspace => { filter.pop(); *selected = 0; }
+                    KeyCode::Char(c) => { if c != '\n' && c != '\r' { filter.push(c); *selected = 0; } }
+                    _ => {}
+                },
+                _ => {}
+            }
+            let f = filter.clone();
+            let filtered_len = sessions.iter().filter(|s| s.title.contains(&f) || s.session_id.contains(&f) || f.is_empty()).count();
+            if *selected >= filtered_len && filtered_len > 0 { *selected = filtered_len - 1; }
+            return false;
+        }
         Mode::Help => match evt {
             TermEvent::Key(key) if key.kind == KeyEventKind::Press => match key.code {
                 KeyCode::Esc | KeyCode::Enter => { app.mode = Mode::Normal; }
@@ -197,6 +237,11 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                 }
                 if text == "/help" {
                     app.mode = Mode::Help;
+                    app.input.clear();
+                    return false;
+                }
+                if text.starts_with("/sessions") {
+                    let _ = app.cmd_tx.send(crate::acp::TuiCommand::ListSessions { cwd: app.cwd.clone() });
                     app.input.clear();
                     return false;
                 }
@@ -272,6 +317,9 @@ fn render(f: &mut Frame<'_>, app: &mut App) {
             app.conversation.info.model.clone()
         };
         render_model_picker(f, area, filter.as_str(), models, *selected, &current_model, app);
+    }
+    if let Mode::SessionPicker { filter, sessions, selected, scroll: _ } = &app.mode {
+        render_session_picker(f, area, filter, sessions, *selected, app);
     }
     if let Mode::Help = &app.mode {
         render_help(f, area, app);
@@ -399,6 +447,43 @@ fn render_model_picker(f: &mut Frame<'_>, area: Rect, filter: &str, models: &[St
         lines.push(Line::styled(format!("{marker} {label}{suffix}"), style));
     }
     lines.push(Line::from(Span::styled(" Esc cancel · Enter select", Style::default().fg(t.thinking_color).bg(t.status_bar_bg))));
+    f.render_widget(
+        Paragraph::new(Text::from(lines)).block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(t.accent_color))),
+        picker_area,
+    );
+}
+
+fn render_session_picker(f: &mut Frame<'_>, area: Rect, filter: &str, sessions: &[crate::acp::SessionEntry], selected: usize, app: &App) {
+    let t = &app.theme;
+    let filtered: Vec<(usize, &crate::acp::SessionEntry)> = sessions.iter().enumerate()
+        .filter(|(_, s)| s.title.contains(filter) || s.session_id.contains(filter) || filter.is_empty()).collect();
+    let view_h = ((area.height / 2).min(20) as usize).max(4);
+    let list_h = view_h.saturating_sub(3);
+    let picker_h = view_h as u16;
+    let picker_w = area.width.saturating_sub(4).min(70);
+    let x = (area.width - picker_w) / 2;
+    let y = (area.height - picker_h) / 2;
+    let picker_area = Rect::new(x, y, picker_w, picker_h);
+
+    let sel = selected.min(filtered.len().saturating_sub(1));
+    let scroll = if filtered.len() <= list_h { 0 }
+        else { sel.saturating_sub(list_h / 2).min(filtered.len().saturating_sub(list_h)) };
+
+    let mut lines = vec![
+        Line::from(Span::styled(" Sessions", Style::default().fg(t.accent_color).bg(t.status_bar_bg))),
+        Line::from(Span::styled(format!(" Filter: {filter}"), Style::default().fg(t.thinking_color).bg(t.status_bar_bg))),
+    ];
+    let visible_range = scroll..(scroll + list_h).min(filtered.len());
+    for i in visible_range {
+        let (_, entry) = &filtered[i];
+        let marker = if i == sel { " ▸" } else { "  " };
+        let style = if i == sel { Style::default().fg(t.accent_color).bg(t.selection_bg) } else { Style::default().bg(t.status_bar_bg) };
+        let label = if entry.title.len() > (picker_w as usize).saturating_sub(6) {
+            format!("{}…", &entry.title[..(picker_w as usize).saturating_sub(7)])
+        } else { entry.title.clone() };
+        lines.push(Line::styled(format!("{marker} {label}"), style));
+    }
+    lines.push(Line::from(Span::styled(" Esc cancel · Enter load", Style::default().fg(t.thinking_color).bg(t.status_bar_bg))));
     f.render_widget(
         Paragraph::new(Text::from(lines)).block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(t.accent_color))),
         picker_area,

@@ -15,6 +15,15 @@ use tokio::sync::{mpsc, oneshot};
 pub enum TuiCommand {
     SendPrompt { content: String },
     SetModel { model: String },
+    ListSessions { cwd: String },
+    LoadSession { session_id: String, cwd: String },
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionEntry {
+    pub session_id: String,
+    pub title: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone)]
@@ -27,6 +36,7 @@ pub enum Event {
     ToolResult { session_id: String, tool: String, result: String },
     SessionCreated { session_id: String },
     ModelList(Vec<String>),
+    SessionList(Vec<SessionEntry>),
     UsageUpdate { ctx_pct: f64, ctx_total: u64, cost: f64 },
     ConfigUpdate { model: Option<String>, provider: Option<String> },
     Error(String),

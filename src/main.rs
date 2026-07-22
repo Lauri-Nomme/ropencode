@@ -146,6 +146,30 @@ async fn main() -> Result<()> {
                         Err(e) => send_error(&cmd_event_tx, format!("set_model: {e}")),
                     }
                 }
+                acp::TuiCommand::ListSessions { cwd } => {
+                    match client.list_sessions(Some(&cwd)).await {
+                        Ok(resp) => {
+                            let sessions: Vec<acp::SessionEntry> = resp["sessions"].as_array().map(|arr| {
+                                arr.iter().map(|s| acp::SessionEntry {
+                                    session_id: s["sessionId"].as_str().unwrap_or("").to_string(),
+                                    title: s["title"].as_str().unwrap_or("(untitled)").to_string(),
+                                    updated_at: s["updatedAt"].as_str().unwrap_or("").to_string(),
+                                }).collect()
+                            }).unwrap_or_default();
+                            let _ = cmd_event_tx.send(acp::Event::SessionList(sessions));
+                        }
+                        Err(e) => send_error(&cmd_event_tx, format!("list_sessions: {e}")),
+                    }
+                }
+                acp::TuiCommand::LoadSession { session_id, cwd } => {
+                    match client.load_session(&session_id, &cwd).await {
+                        Ok(resp) => {
+                            let _ = cmd_event_tx.send(acp::Event::SessionCreated { session_id: session_id.clone() });
+                            parse_config_options(&resp, &cmd_event_tx);
+                        }
+                        Err(e) => send_error(&cmd_event_tx, format!("load_session: {e}")),
+                    }
+                }
             }
         }
     });
