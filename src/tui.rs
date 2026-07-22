@@ -25,6 +25,7 @@ struct App {
     content_version: u64, last_rendered_version: u64,
     cwd: String, cmd_tx: mpsc::UnboundedSender<crate::acp::TuiCommand>,
     error_buffer: Vec<String>, last_error_flush: Option<Instant>,
+    tab_tool_idx: usize,
 }
 
 impl App {
@@ -34,6 +35,7 @@ impl App {
             input: String::new(), mode: Mode::Normal, available_models: vec![],
             viewport_height: 0, cached_lines: vec![], content_version: 0, last_rendered_version: 0,
             cwd, cmd_tx, error_buffer: vec![], last_error_flush: None,
+            tab_tool_idx: 0,
         }
     }
 
@@ -189,9 +191,14 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
             }
             KeyCode::Backspace => { app.input.pop(); false }
             KeyCode::Tab => {
-                if let Some(msg) = app.conversation.messages.iter_mut().rev().find(|m| !m.tool_calls.is_empty()) {
-                    let idx = msg.tool_calls.len() - 1;
-                    msg.tool_calls[idx].collapsed = !msg.tool_calls[idx].collapsed;
+                // Find the last message with tool calls
+                let last_msg_idx = app.conversation.messages.iter().rposition(|m| !m.tool_calls.is_empty());
+                if let Some(msg_idx) = last_msg_idx {
+                    let count = app.conversation.messages[msg_idx].tool_calls.len();
+                    app.tab_tool_idx = app.tab_tool_idx % count;
+                    app.conversation.messages[msg_idx].tool_calls[app.tab_tool_idx].collapsed =
+                        !app.conversation.messages[msg_idx].tool_calls[app.tab_tool_idx].collapsed;
+                    app.tab_tool_idx = (app.tab_tool_idx + 1) % count;
                     app.mark_dirty(); app.rebuild_cache();
                 }
                 false
