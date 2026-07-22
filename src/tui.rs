@@ -25,7 +25,7 @@ struct App {
     content_version: u64, last_rendered_version: u64,
     cwd: String, cmd_tx: mpsc::UnboundedSender<crate::acp::TuiCommand>,
     error_buffer: Vec<String>, last_error_flush: Option<Instant>,
-    tab_tool_idx: usize,
+    tab_tool_idx: usize, frame: u64,
 }
 
 impl App {
@@ -35,7 +35,7 @@ impl App {
             input: String::new(), mode: Mode::Normal, available_models: vec![],
             viewport_height: 0, cached_lines: vec![], content_version: 0, last_rendered_version: 0,
             cwd, cmd_tx, error_buffer: vec![], last_error_flush: None,
-            tab_tool_idx: 0,
+            tab_tool_idx: 0, frame: 0,
         }
     }
 
@@ -250,6 +250,7 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
 }
 
 fn render(f: &mut Frame<'_>, app: &mut App) {
+    app.frame += 1;
     let area = f.area();
     if area.width == 0 || area.height == 0 { return; }
     let convo_h = (area.height as usize).saturating_sub(STATUS_HEIGHT + 3);
@@ -287,7 +288,9 @@ fn render_conversation(f: &mut Frame<'_>, area: Rect, app: &App) {
     let end = (start + area.height as usize).min(total);
     let mut lines: Vec<Line<'static>> = if start < total { app.cached_lines[start..end].to_vec() } else { vec![] };
     if app.agent_busy && !app.conversation.messages.back().is_some_and(|m| m.streaming) {
-        lines.push(Line::styled(" ● thinking…", Style::default().fg(Color::Yellow)));
+        const SPINNER: &[char] = &['⣷', '⣯', '⣟', '⡿', '⢿', '⣻', '⣽', '⣾'];
+        let frame = (app.frame / 3) as usize % SPINNER.len();
+        lines.push(Line::styled(format!(" {} thinking…", SPINNER[frame]), Style::default().fg(Color::Yellow)));
     }
     f.render_widget(Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }), area);
     let mut state = ScrollbarState::default().position(offset).content_length(total);
