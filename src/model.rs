@@ -24,14 +24,7 @@ pub struct Message {
 }
 
 fn now_str() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let secs = now.as_secs();
-    let h = (secs / 3600) % 24;
-    let m = (secs / 60) % 60;
-    let s = secs % 60;
-    format!("{h:02}:{m:02}:{s:02}")
+    chrono::Local::now().format("%H:%M:%S").to_string()
 }
 
 #[derive(Debug, Clone, PartialEq)]
