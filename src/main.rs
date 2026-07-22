@@ -115,9 +115,9 @@ async fn main() -> Result<()> {
                 let _ = tx.send(acp::Event::Error(msg));
             }
             match cmd {
-                acp::TuiCommand::SendPrompt { content, .. } => {
+                acp::TuiCommand::SendPrompt { content } => {
                     match client.prompt(&sid_for_cmd, &content).await {
-                        Ok(_) => {}
+                        Ok(_) => { let _ = cmd_event_tx.send(acp::Event::AgentTextDone { session_id: sid_for_cmd.clone() }); }
                         Err(e) => {
                             // Extract user-friendly message from ACP error response
                             let err_val = format!("{e}");

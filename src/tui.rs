@@ -72,7 +72,7 @@ impl App {
         match event {
             Event::AgentTextChunk { text, .. } => { self.agent_busy = true; self.conversation.append_delta(&text); self.mark_dirty(); self.auto_scroll(); }
             Event::AgentThoughtChunk { text, .. } => { self.agent_busy = true; self.conversation.append_thinking(&text); self.mark_dirty(); self.auto_scroll(); }
-            Event::AgentTextDone { .. } => { self.conversation.finish_thinking(); self.mark_dirty(); }
+            Event::AgentTextDone { .. } => { self.agent_busy = false; self.conversation.finish_thinking(); self.mark_dirty(); self.auto_scroll(); }
             Event::UserMessage { text, .. } => { self.conversation.add_user_message(&text); self.mark_dirty(); self.sticky_bottom = true; self.auto_scroll(); }
             Event::ToolCallUpdate { tool, status, .. } => { self.conversation.add_tool_call(&tool, &status); self.mark_dirty(); self.auto_scroll(); }
             Event::ToolResult { tool, result, .. } => { self.conversation.complete_tool_call(&tool, &result); self.mark_dirty(); self.auto_scroll(); }
@@ -221,6 +221,17 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
             KeyCode::PageDown => { let vh = app.viewport_height.max(1); let max = app.max_scroll(); app.scroll_offset = (app.scroll_offset + vh).min(max); app.check_sticky(); false }
             KeyCode::Home => { app.scroll_offset = 0; app.did_scroll_up(); false }
             KeyCode::End => { app.scroll_offset = app.max_scroll(); app.sticky_bottom = true; false }
+            KeyCode::Char(c) if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) && c == 'c' => {
+                if app.agent_busy {
+                    app.agent_busy = false;
+                    app.conversation.finish_thinking();
+                    let msg = "─ cancelled ─";
+                    app.conversation.add_user_message(msg);
+                    app.mark_dirty();
+                    app.auto_scroll();
+                }
+                false
+            }
             KeyCode::Char(c) => { app.input.push(c); false }
             _ => false,
         },
