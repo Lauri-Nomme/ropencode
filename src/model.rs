@@ -27,6 +27,17 @@ fn now_str() -> String {
     chrono::Local::now().format("%H:%M:%S").to_string()
 }
 
+fn ts_or_now(iso: Option<&str>) -> String {
+    match iso {
+        Some(s) => chrono::DateTime::parse_from_rfc3339(s)
+            .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.fZ")
+                .map(|d| d.and_utc().fixed_offset()))
+            .map(|dt| dt.format("%H:%M:%S").to_string())
+            .unwrap_or_else(|_| now_str()),
+        None => now_str(),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Role {
     User,
@@ -61,10 +72,11 @@ impl Conversation {
         Self { messages: VecDeque::new(), total_lines: 0, info: SessionInfo::default(), error: None, thinking_msg_idx: None }
     }
 
-    pub fn add_user_message(&mut self, text: &str) {
+    pub fn add_user_message(&mut self, text: &str, created_at: Option<&str>) {
         let rendered = render_text_lines(text);
         let lines = rendered.len() + 2;
         self.total_lines += lines;
+        let time = ts_or_now(created_at);
         self.messages.push_back(Message {
             role: Role::User,
             text: text.to_string(),
@@ -73,11 +85,12 @@ impl Conversation {
             rendered,
             rendered_tools: vec![],
             is_thinking: false,
-            time: now_str(),
+            time,
         });
     }
 
-    pub fn start_assistant_message(&mut self) {
+    pub fn start_assistant_message(&mut self, created_at: Option<&str>) {
+        let time = ts_or_now(created_at);
         self.messages.push_back(Message {
             role: Role::Assistant,
             text: String::new(),
@@ -86,17 +99,17 @@ impl Conversation {
             rendered: vec![],
             rendered_tools: vec![],
             is_thinking: false,
-            time: now_str(),
+            time,
         });
     }
 
-    pub fn append_delta(&mut self, delta: &str) {
+    pub fn append_delta(&mut self, delta: &str, created_at: Option<&str>) {
         // If the last message is thinking, finish it and start a fresh response message
         if self.messages.back().is_some_and(|m| m.is_thinking) {
             self.finish_thinking();
         }
         if self.messages.is_empty() || self.messages.back().is_some_and(|m| m.role != Role::Assistant) {
-            self.start_assistant_message();
+            self.start_assistant_message(created_at);
         }
         let last = self.messages.len() - 1;
         let old_lines = self.messages[last].rendered.len();
@@ -109,9 +122,9 @@ impl Conversation {
         }
     }
 
-    pub fn append_thinking(&mut self, delta: &str) {
+    pub fn append_thinking(&mut self, delta: &str, created_at: Option<&str>) {
         if self.thinking_msg_idx.is_none() {
-            self.start_assistant_message();
+            self.start_assistant_message(created_at);
             self.thinking_msg_idx = Some(self.messages.len() - 1);
         }
         let last = self.thinking_msg_idx.unwrap();
@@ -213,7 +226,7 @@ impl Conversation {
 
     fn assure_assistant(&mut self) {
         if self.messages.is_empty() || self.messages.back().is_some_and(|m| m.role != Role::Assistant) {
-            self.start_assistant_message();
+            self.start_assistant_message(None);
         }
     }
 

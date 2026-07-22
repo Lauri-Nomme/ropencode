@@ -29,6 +29,7 @@ struct App {
     tab_tool_idx: usize, frame: u64,
     theme: Theme,
     stream_buffer: String,
+    pending_created_at: Option<String>,
 }
 
 impl App {
@@ -40,6 +41,7 @@ impl App {
             cwd, cmd_tx, error_buffer: vec![], last_error_flush: None,
             tab_tool_idx: 0, frame: 0, theme,
             stream_buffer: String::new(),
+            pending_created_at: None,
         }
     }
 
@@ -57,7 +59,8 @@ impl App {
     fn flush_stream_buffer(&mut self) {
         if self.stream_buffer.is_empty() { return; }
         let text = std::mem::take(&mut self.stream_buffer);
-        self.conversation.append_delta(&text);
+        let created_at = self.pending_created_at.take();
+        self.conversation.append_delta(&text, created_at.as_deref());
         self.mark_dirty();
         self.auto_scroll();
     }
@@ -82,10 +85,18 @@ impl App {
         }
 
         match event {
-            Event::AgentTextChunk { text, .. } => { self.agent_busy = true; self.stream_buffer.push_str(&text); }
-            Event::AgentThoughtChunk { text, .. } => { self.agent_busy = true; self.conversation.append_thinking(&text); self.mark_dirty(); self.auto_scroll(); }
+            Event::AgentTextChunk { text, created_at, .. } => {
+                self.agent_busy = true;
+                self.pending_created_at = self.pending_created_at.take().or(created_at);
+                self.stream_buffer.push_str(&text);
+            }
+            Event::AgentThoughtChunk { text, created_at, .. } => {
+                self.agent_busy = true;
+                self.conversation.append_thinking(&text, created_at.as_deref());
+                self.mark_dirty(); self.auto_scroll();
+            }
             Event::AgentTextDone { .. } => { self.agent_busy = false; self.flush_stream_buffer(); self.conversation.finish_thinking(); self.mark_dirty(); self.auto_scroll(); }
-            Event::UserMessage { text, .. } => { self.conversation.add_user_message(&text); self.mark_dirty(); self.sticky_bottom = true; self.auto_scroll(); }
+            Event::UserMessage { text, created_at, .. } => { self.conversation.add_user_message(&text, created_at.as_deref()); self.mark_dirty(); self.sticky_bottom = true; self.auto_scroll(); }
             Event::ToolCallUpdate { tool, status, .. } => { self.conversation.add_tool_call(&tool, &status); self.mark_dirty(); self.auto_scroll(); }
             Event::ToolResult { tool, result, .. } => { self.conversation.complete_tool_call(&tool, &result); self.mark_dirty(); self.auto_scroll(); }
             Event::ModelList(models) => { self.available_models = models; }
@@ -256,7 +267,7 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                     return false;
                 }
                 if !text.is_empty() {
-                    app.conversation.add_user_message(&text); app.mark_dirty();
+                    app.conversation.add_user_message(&text, None); app.mark_dirty();
                     app.input.clear(); app.sticky_bottom = true;
                     app.rebuild_cache(); app.scroll_offset = app.max_scroll();
                     let _ = app.cmd_tx.send(crate::acp::TuiCommand::SendPrompt { content: text });
@@ -289,7 +300,7 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                     app.flush_stream_buffer();
                     app.conversation.finish_thinking();
                     let msg = "─ cancelled ─";
-                    app.conversation.add_user_message(msg);
+                    app.conversation.add_user_message(msg, None);
                     app.mark_dirty();
                     app.auto_scroll();
                 }

@@ -28,10 +28,10 @@ pub struct SessionEntry {
 
 #[derive(Debug, Clone)]
 pub enum Event {
-    AgentTextChunk { session_id: String, text: String },
-    AgentThoughtChunk { session_id: String, text: String },
+    AgentTextChunk { session_id: String, text: String, created_at: Option<String> },
+    AgentThoughtChunk { session_id: String, text: String, created_at: Option<String> },
     AgentTextDone { session_id: String },
-    UserMessage { session_id: String, text: String },
+    UserMessage { session_id: String, text: String, created_at: Option<String> },
     ToolCallUpdate { session_id: String, tool: String, status: String },
     ToolResult { session_id: String, tool: String, result: String },
     SessionCreated { session_id: String },
@@ -272,15 +272,16 @@ fn parse_notification(method: &str, params: &Value) -> Option<Event> {
             let update = &params["update"];
             let kind = update["sessionUpdate"].as_str()?;
             let text = update["content"]["text"].as_str().unwrap_or("").to_string();
+            let created_at = update["createdAt"].as_str().map(|s| s.to_string());
             match kind {
                 "agent_message_chunk" => {
-                    Some(Event::AgentTextChunk { session_id: sid, text })
+                    Some(Event::AgentTextChunk { session_id: sid, text, created_at })
                 }
                 "agent_thought_chunk" => {
-                    Some(Event::AgentThoughtChunk { session_id: sid, text })
+                    Some(Event::AgentThoughtChunk { session_id: sid, text, created_at })
                 }
                 "user_message_chunk" => {
-                    Some(Event::UserMessage { session_id: sid, text })
+                    Some(Event::UserMessage { session_id: sid, text, created_at })
                 }
                 "tool_call" => {
                     let tool = update["title"].as_str().or_else(|| update["toolCall"]["name"].as_str()).unwrap_or("?").to_string();
