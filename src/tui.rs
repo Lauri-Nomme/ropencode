@@ -2,19 +2,23 @@ use crate::acp::Event;
 use crate::config::Theme;
 use crate::model::Conversation;
 use anyhow::Result;
-use crossterm::event::{self, Event as TermEvent, KeyCode, KeyEventKind, MouseEventKind};
+use crossterm::event::{self, Event as TermEvent, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::prelude::Stylize;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 use ratatui::{Frame, Terminal};
+use std::collections::VecDeque;
 use std::io;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 const STATUS_HEIGHT: usize = 2;
 const ERROR_COALESCE_MS: u64 = 600;
+const COMMANDS: &[&str] = &["exit", "help", "model", "sessions"];
+const CMD_DESCRIPTIONS: &[&str] = &["Quit", "Show help", "Open model picker", "List sessions"];
 
 enum Mode { Normal, ModelPicker { filter: String, models: Vec<String>, selected: usize, scroll: usize }, Help, SessionPicker { filter: String, sessions: Vec<crate::acp::SessionEntry>, selected: usize, scroll: usize } }
 
@@ -30,6 +34,7 @@ struct App {
     theme: Theme,
     stream_buffer: String,
     pending_created_at: Option<String>,
+    cmd_picker_selection: usize,
 }
 
 impl App {
@@ -42,6 +47,7 @@ impl App {
             tab_tool_idx: 0, frame: 0, theme,
             stream_buffer: String::new(),
             pending_created_at: None,
+            cmd_picker_selection: 0,
         }
     }
 
@@ -97,8 +103,8 @@ impl App {
             }
             Event::AgentTextDone { .. } => { self.agent_busy = false; self.flush_stream_buffer(); self.conversation.finish_thinking(); self.mark_dirty(); self.auto_scroll(); }
             Event::UserMessage { text, created_at, .. } => { self.conversation.add_user_message(&text, created_at.as_deref()); self.mark_dirty(); self.sticky_bottom = true; self.auto_scroll(); }
-            Event::ToolCallUpdate { tool, status, .. } => { self.conversation.add_tool_call(&tool, &status); self.mark_dirty(); self.auto_scroll(); }
-            Event::ToolResult { tool, result, .. } => { self.conversation.complete_tool_call(&tool, &result); self.mark_dirty(); self.auto_scroll(); }
+            Event::ToolCallUpdate { tool_call_id, tool, status, .. } => { self.conversation.add_tool_call(&tool, &tool_call_id, &status); self.mark_dirty(); self.auto_scroll(); }
+            Event::ToolResult { tool_call_id, result, .. } => { self.conversation.complete_tool_call(&tool_call_id, &result); self.mark_dirty(); self.auto_scroll(); }
             Event::ModelList(models) => { self.available_models = models; }
             Event::SessionList(sessions) => {
                 self.mode = Mode::SessionPicker { filter: String::new(), sessions, selected: 0, scroll: 0 };
@@ -126,12 +132,12 @@ pub async fn run(
 ) -> Result<()> {
     crossterm::terminal::enable_raw_mode()?;
     let mut stdout = io::stdout();
-    crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen)?;
+    crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen, crossterm::event::EnableMouseCapture)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
     let mut app = App::new(cwd, cmd_tx, theme);
     let res = run_loop(&mut terminal, &mut app, event_rx).await;
     crossterm::terminal::disable_raw_mode()?;
-    crossterm::execute!(terminal.backend_mut(), crossterm::terminal::LeaveAlternateScreen)?;
+    crossterm::execute!(terminal.backend_mut(), crossterm::terminal::LeaveAlternateScreen, crossterm::event::DisableMouseCapture)?;
     terminal.show_cursor()?;
     res
 }
@@ -238,7 +244,47 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
             }
             _ => {}
         },
-        Mode::Normal => {}
+        Mode::Normal => {
+            if let TermEvent::Key(key) = &evt {
+                if key.kind == KeyEventKind::Press && app.input.starts_with('/') && app.input.len() > 1 {
+                    let filter = app.input[1..].trim();
+                    let filtered: Vec<&&str> = COMMANDS.iter().filter(|c| c.contains(filter)).collect();
+                    match key.code {
+                        KeyCode::Up => {
+                            app.cmd_picker_selection = app.cmd_picker_selection.saturating_sub(1);
+                            return false;
+                        }
+                        KeyCode::Down => {
+                            let count = filtered.len();
+                            if count > 0 {
+                                app.cmd_picker_selection = (app.cmd_picker_selection + 1) % count;
+                            }
+                            return false;
+                        }
+                        KeyCode::Enter if !filtered.is_empty() => {
+                            let idx = app.cmd_picker_selection.min(filtered.len().saturating_sub(1));
+                            let cmd = filtered[idx];
+                            app.input.clear();
+                            app.cmd_picker_selection = 0;
+                            match *cmd {
+                                "exit" => return true,
+                                "help" => { app.mode = Mode::Help; return false; }
+                                "model" => {
+                                    app.mode = Mode::ModelPicker { filter: String::new(), models: app.available_models.clone(), selected: 0, scroll: 0 };
+                                    return false;
+                                }
+                                "sessions" => {
+                                    let _ = app.cmd_tx.send(crate::acp::TuiCommand::ListSessions { cwd: app.cwd.clone() });
+                                    return false;
+                                }
+                                _ => return false,
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
     }
 
     match evt {
@@ -274,15 +320,13 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                 }
                 false
             }
-            KeyCode::Backspace => { app.input.pop(); false }
+            KeyCode::Backspace => { app.input.pop(); app.cmd_picker_selection = 0; false }
             KeyCode::Tab => {
-                // Find the last message with tool calls
-                let last_msg_idx = app.conversation.messages.iter().rposition(|m| !m.tool_calls.is_empty());
-                if let Some(msg_idx) = last_msg_idx {
+                let last_visible = last_visible_tool_msg(&app.conversation.messages, app.scroll_offset, app.viewport_height);
+                if let Some(msg_idx) = last_visible {
                     let count = app.conversation.messages[msg_idx].tool_calls.len();
                     app.tab_tool_idx = app.tab_tool_idx % count;
-                    app.conversation.messages[msg_idx].tool_calls[app.tab_tool_idx].collapsed =
-                        !app.conversation.messages[msg_idx].tool_calls[app.tab_tool_idx].collapsed;
+                    app.conversation.toggle_tool_expand(msg_idx, app.tab_tool_idx);
                     app.tab_tool_idx = (app.tab_tool_idx + 1) % count;
                     app.mark_dirty(); app.rebuild_cache();
                 }
@@ -306,13 +350,28 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                 }
                 false
             }
-            KeyCode::Char(c) => { app.input.push(c); false }
+            KeyCode::Char(c) => { app.input.push(c); app.cmd_picker_selection = 0; false }
             _ => false,
         },
-        TermEvent::Mouse(mev) => match mev.kind {
-            MouseEventKind::ScrollDown => { let max = app.max_scroll(); app.scroll_offset = (app.scroll_offset + 3).min(max); app.check_sticky(); false }
-            MouseEventKind::ScrollUp => { app.scroll_offset = app.scroll_offset.saturating_sub(3); app.did_scroll_up(); false }
-            _ => false,
+        TermEvent::Mouse(mev) => {
+            if mev.kind == MouseEventKind::Down(MouseButton::Left) && (mev.row as usize) < app.viewport_height {
+                let line_idx = app.scroll_offset + mev.row as usize;
+                if line_idx < app.cached_lines.len() {
+                    let line_text = app.cached_lines[line_idx].to_string();
+                    if line_text.contains("[+]") || line_text.contains("[-]") {
+                        if let Some((msg_idx, tool_idx)) = crate::model::global_line_to_tool_call(&app.conversation.messages, line_idx) {
+                            app.conversation.toggle_tool_expand(msg_idx, tool_idx);
+                            app.tab_tool_idx = (tool_idx + 1) % app.conversation.messages[msg_idx].tool_calls.len();
+                            app.mark_dirty(); app.rebuild_cache();
+                        }
+                    }
+                }
+                false
+            } else { match mev.kind {
+                MouseEventKind::ScrollDown => { let max = app.max_scroll(); app.scroll_offset = (app.scroll_offset + 3).min(max); app.check_sticky(); false }
+                MouseEventKind::ScrollUp => { app.scroll_offset = app.scroll_offset.saturating_sub(3); app.did_scroll_up(); false }
+                _ => false,
+            }}
         },
         TermEvent::Resize(_, h) => { app.viewport_height = (h as usize).saturating_sub(STATUS_HEIGHT + 3); app.clamp_offset(); if app.sticky_bottom { app.scroll_offset = app.max_scroll(); } false }
         _ => false,
@@ -347,6 +406,7 @@ fn render(f: &mut Frame<'_>, app: &mut App) {
     if let Mode::Help = &app.mode {
         render_help(f, area, app);
     }
+    render_command_picker(f, area, app);
     // Flush stale error buffer on render tick
     if !app.error_buffer.is_empty() {
         if let Some(t) = app.last_error_flush {
@@ -433,9 +493,11 @@ fn render_help(f: &mut Frame<'_>, area: Rect, app: &App) {
         Line::from(Span::raw("")),
         Line::from(Span::styled(" Press Esc or Enter to close", Style::default().fg(t.thinking_color))),
     ];
+    let help_area = Rect::new(x, y, w, h);
+    f.render_widget(ratatui::widgets::Clear, help_area);
     f.render_widget(
-        Paragraph::new(Text::from(lines)).block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(t.accent_color))),
-        Rect::new(x, y, w, h),
+        Paragraph::new(Text::from(lines)).style(Style::default().bg(t.status_bar_bg)).block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(t.accent_color)).bg(t.status_bar_bg)),
+        help_area,
     );
 }
 
@@ -470,17 +532,61 @@ fn render_model_picker(f: &mut Frame<'_>, area: Rect, filter: &str, models: &[St
         lines.push(Line::styled(format!("{marker} {label}{suffix}"), style));
     }
     lines.push(Line::from(Span::styled(" Esc cancel · Enter select", Style::default().fg(t.thinking_color).bg(t.status_bar_bg))));
+    f.render_widget(ratatui::widgets::Clear, picker_area);
     f.render_widget(
-        Paragraph::new(Text::from(lines)).block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(t.accent_color))),
+        Paragraph::new(Text::from(lines)).style(Style::default().bg(t.status_bar_bg)).block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(t.accent_color)).bg(t.status_bar_bg)),
         picker_area,
     );
+}
+
+fn render_command_picker(f: &mut Frame<'_>, area: Rect, app: &App) {
+    let input = app.input.trim_start();
+    if !input.starts_with('/') || input.len() <= 1 { return; }
+    let filter = input[1..].trim();
+    let filtered: Vec<usize> = COMMANDS.iter().enumerate().filter(|(_, cmd)| cmd.contains(filter)).map(|(i, _)| i).collect();
+    if filtered.is_empty() { return; }
+
+    let popup_h = (filtered.len() + 4) as u16;
+    let popup_w = 50u16;
+    let input_y = (area.height as usize).saturating_sub(STATUS_HEIGHT + 3);
+    let popup_y = input_y.saturating_sub(popup_h as usize).max(1) as u16;
+    let x = 2u16;
+
+    let sel = app.cmd_picker_selection.min(filtered.len().saturating_sub(1));
+    let mut lines: Vec<Line<'static>> = vec![Line::from(Span::styled(" Commands", Style::default().fg(app.theme.accent_color).bg(app.theme.status_bar_bg)))];
+    for (i, &idx) in filtered.iter().enumerate() {
+        let marker = if i == sel { " ▸" } else { "  " };
+        let style = if i == sel { Style::default().fg(app.theme.accent_color).bg(app.theme.selection_bg) } else { Style::default().bg(app.theme.status_bar_bg) };
+        lines.push(Line::styled(format!("{marker} /{}  {}", COMMANDS[idx], CMD_DESCRIPTIONS[idx]), style));
+    }
+    let picker_area = Rect::new(x, popup_y, popup_w, popup_h);
+    f.render_widget(ratatui::widgets::Clear, picker_area);
+    f.render_widget(
+        Paragraph::new(Text::from(lines)).style(Style::default().bg(app.theme.status_bar_bg)).block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(app.theme.accent_color)).bg(app.theme.status_bar_bg)),
+        picker_area,
+    );
+}
+
+fn last_visible_tool_msg(messages: &VecDeque<crate::model::Message>, scroll_offset: usize, viewport_height: usize) -> Option<usize> {
+    let vis_end = scroll_offset + viewport_height;
+    let mut cur = 0usize;
+    let mut last = None;
+    for (idx, msg) in messages.iter().enumerate() {
+        let end = cur + crate::model::msg_line_count(msg);
+        if end > scroll_offset && cur < vis_end && !msg.tool_calls.is_empty() {
+            last = Some(idx);
+        }
+        cur = end;
+    }
+    last
 }
 
 fn render_session_picker(f: &mut Frame<'_>, area: Rect, filter: &str, sessions: &[crate::acp::SessionEntry], selected: usize, app: &App) {
     let t = &app.theme;
     let filtered: Vec<(usize, &crate::acp::SessionEntry)> = sessions.iter().enumerate()
         .filter(|(_, s)| s.title.contains(filter) || s.session_id.contains(filter) || filter.is_empty()).collect();
-    let view_h = ((area.height / 2).min(20) as usize).max(4);
+    let min_h = if filtered.is_empty() { 6 } else { 4 };
+    let view_h = ((area.height / 2).min(20) as usize).max(min_h);
     let list_h = view_h.saturating_sub(3);
     let picker_h = view_h as u16;
     let picker_w = area.width.saturating_sub(4).min(70);
@@ -496,19 +602,24 @@ fn render_session_picker(f: &mut Frame<'_>, area: Rect, filter: &str, sessions: 
         Line::from(Span::styled(" Sessions", Style::default().fg(t.accent_color).bg(t.status_bar_bg))),
         Line::from(Span::styled(format!(" Filter: {filter}"), Style::default().fg(t.thinking_color).bg(t.status_bar_bg))),
     ];
-    let visible_range = scroll..(scroll + list_h).min(filtered.len());
-    for i in visible_range {
-        let (_, entry) = &filtered[i];
-        let marker = if i == sel { " ▸" } else { "  " };
-        let style = if i == sel { Style::default().fg(t.accent_color).bg(t.selection_bg) } else { Style::default().bg(t.status_bar_bg) };
-        let label = if entry.title.len() > (picker_w as usize).saturating_sub(6) {
-            format!("{}…", &entry.title[..(picker_w as usize).saturating_sub(7)])
-        } else { entry.title.clone() };
-        lines.push(Line::styled(format!("{marker} {label}"), style));
+    if filtered.is_empty() {
+        lines.push(Line::from(Span::styled("  (no sessions found)", Style::default().fg(t.thinking_color).bg(t.status_bar_bg))));
+    } else {
+        let visible_range = scroll..(scroll + list_h).min(filtered.len());
+        for i in visible_range {
+            let (_, entry) = &filtered[i];
+            let marker = if i == sel { " ▸" } else { "  " };
+            let style = if i == sel { Style::default().fg(t.accent_color).bg(t.selection_bg) } else { Style::default().bg(t.status_bar_bg) };
+            let label = if entry.title.len() > (picker_w as usize).saturating_sub(6) {
+                format!("{}…", &entry.title[..(picker_w as usize).saturating_sub(7)])
+            } else { entry.title.clone() };
+            lines.push(Line::styled(format!("{marker} {label}"), style));
+        }
     }
     lines.push(Line::from(Span::styled(" Esc cancel · Enter load", Style::default().fg(t.thinking_color).bg(t.status_bar_bg))));
+    f.render_widget(ratatui::widgets::Clear, picker_area);
     f.render_widget(
-        Paragraph::new(Text::from(lines)).block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(t.accent_color))),
+        Paragraph::new(Text::from(lines)).style(Style::default().bg(t.status_bar_bg)).block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(t.accent_color)).bg(t.status_bar_bg)),
         picker_area,
     );
 }

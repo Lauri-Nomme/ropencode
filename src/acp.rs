@@ -32,8 +32,8 @@ pub enum Event {
     AgentThoughtChunk { session_id: String, text: String, created_at: Option<String> },
     AgentTextDone { session_id: String },
     UserMessage { session_id: String, text: String, created_at: Option<String> },
-    ToolCallUpdate { session_id: String, tool: String, status: String },
-    ToolResult { session_id: String, tool: String, result: String },
+    ToolCallUpdate { session_id: String, tool_call_id: String, tool: String, status: String },
+    ToolResult { session_id: String, tool_call_id: String, result: String },
     SessionCreated { session_id: String },
     ModelList(Vec<String>),
     SessionList(Vec<SessionEntry>),
@@ -284,15 +284,16 @@ fn parse_notification(method: &str, params: &Value) -> Option<Event> {
                     Some(Event::UserMessage { session_id: sid, text, created_at })
                 }
                 "tool_call" => {
+                    let tool_call_id = update["toolCallId"].as_str().unwrap_or("?").to_string();
                     let tool = update["title"].as_str().or_else(|| update["toolCall"]["name"].as_str()).unwrap_or("?").to_string();
-                    Some(Event::ToolCallUpdate { session_id: sid, tool, status: "running".into() })
+                    Some(Event::ToolCallUpdate { session_id: sid, tool_call_id, tool, status: "running".into() })
                 }
                 "tool_call_update" | "tool_call_result" => {
-                    let tool = update["title"].as_str().or_else(|| update["toolCall"]["name"].as_str()).unwrap_or("?").to_string();
+                    let tool_call_id = update["toolCallId"].as_str().unwrap_or("?").to_string();
                     let result = update["result"].as_str().or_else(|| {
                         update["content"][0]["content"]["text"].as_str()
                     }).unwrap_or("").to_string();
-                    Some(Event::ToolResult { session_id: sid, tool, result })
+                    Some(Event::ToolResult { session_id: sid, tool_call_id, result })
                 }
                 "usage_update" => {
                     let size = update["size"].as_u64().unwrap_or(0);

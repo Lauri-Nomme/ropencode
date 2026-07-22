@@ -7,6 +7,7 @@ const COLLAPSED_MAX_LINES: usize = 5;
 #[derive(Debug, Clone)]
 pub struct ToolCall {
     pub tool: String,
+    pub tool_call_id: String,
     pub status: String,
     pub result: Option<String>,
     pub collapsed: bool,
@@ -15,9 +16,11 @@ pub struct ToolCall {
 pub struct Message {
     pub role: Role,
     pub text: String,
+    pub thinking_text: String,
     pub streaming: bool,
     pub tool_calls: Vec<ToolCall>,
     rendered: Vec<Line<'static>>,
+    thinking_rendered: Vec<Line<'static>>,
     rendered_tools: Vec<Line<'static>>,
     pub is_thinking: bool,
     pub time: String,
@@ -67,6 +70,32 @@ pub struct Conversation {
     thinking_msg_idx: Option<usize>,
 }
 
+pub fn global_line_to_tool_call<'a>(messages: &'a VecDeque<Message>, line_idx: usize) -> Option<(usize, usize)> {
+    let mut cur = 0usize;
+    for (msg_idx, msg) in messages.iter().enumerate() {
+        let end = cur + msg_line_count(msg);
+        if line_idx < end {
+            let in_msg = line_idx - cur;
+            let header = if msg.role == Role::User { 2 } else { 1 };
+            let tools_start = header + msg.thinking_rendered.len() + msg.rendered.len();
+            if in_msg >= tools_start {
+                let tool_offset = in_msg - tools_start;
+                let mut running = 0;
+                for (tidx, tc) in msg.tool_calls.iter().enumerate() {
+                    let block = tool_block_line_count(tc);
+                    if tool_offset < running + block {
+                        return Some((msg_idx, tidx));
+                    }
+                    running += block;
+                }
+            }
+            return None;
+        }
+        cur = end;
+    }
+    None
+}
+
 impl Conversation {
     pub fn new() -> Self {
         Self { messages: VecDeque::new(), total_lines: 0, info: SessionInfo::default(), error: None, thinking_msg_idx: None }
@@ -80,9 +109,11 @@ impl Conversation {
         self.messages.push_back(Message {
             role: Role::User,
             text: text.to_string(),
+            thinking_text: String::new(),
             streaming: false,
             tool_calls: vec![],
             rendered,
+            thinking_rendered: vec![],
             rendered_tools: vec![],
             is_thinking: false,
             time,
@@ -94,9 +125,11 @@ impl Conversation {
         self.messages.push_back(Message {
             role: Role::Assistant,
             text: String::new(),
+            thinking_text: String::new(),
             streaming: true,
             tool_calls: vec![],
             rendered: vec![],
+            thinking_rendered: vec![],
             rendered_tools: vec![],
             is_thinking: false,
             time,
@@ -129,9 +162,10 @@ impl Conversation {
         }
         let last = self.thinking_msg_idx.unwrap();
         self.messages[last].is_thinking = true;
+        self.messages[last].thinking_text.push_str(delta);
         let rendered = render_text_lines(delta);
-        self.messages[last].rendered.extend(rendered.clone());
         self.total_lines += rendered.len();
+        self.messages[last].thinking_rendered.extend(rendered);
     }
 
     pub fn finish_thinking(&mut self) {
@@ -142,11 +176,12 @@ impl Conversation {
         }
     }
 
-    pub fn add_tool_call(&mut self, tool: &str, status: &str) {
+    pub fn add_tool_call(&mut self, tool: &str, tool_call_id: &str, status: &str) {
         self.assure_assistant();
         let last = self.messages.len() - 1;
         self.messages[last].tool_calls.push(ToolCall {
             tool: tool.to_string(),
+            tool_call_id: tool_call_id.to_string(),
             status: status.to_string(),
             result: None,
             collapsed: true,
@@ -155,9 +190,9 @@ impl Conversation {
         self.rebuild_tool_lines(last);
     }
 
-    pub fn complete_tool_call(&mut self, tool: &str, result: &str) {
+    pub fn complete_tool_call(&mut self, tool_call_id: &str, result: &str) {
         let last = self.messages.len().saturating_sub(1);
-        if let Some(tc) = self.messages[last].tool_calls.iter_mut().rev().find(|tc| tc.tool == tool) {
+        if let Some(tc) = self.messages[last].tool_calls.iter_mut().rev().find(|tc| tc.tool_call_id == tool_call_id) {
             let old_lines = count_lines(&tc.result);
             tc.status = "completed".into();
             tc.result = Some(result.to_string());
@@ -204,13 +239,14 @@ impl Conversation {
             } else {
                 let label = if msg.streaming { format!(" Assistant (streaming…) [{}]", msg.time) } else { format!(" Assistant [{}]", msg.time) };
                 out.push(Line::styled(label, style));
+                let has_thinking = !msg.thinking_rendered.is_empty();
+                if has_thinking {
+                    for l in &msg.thinking_rendered {
+                        out.push(Line::styled(l.to_string(), Style::default().fg(Color::DarkGray)));
+                    }
+                }
                 for l in &msg.rendered {
-                    let line = if msg.is_thinking {
-                        Line::styled(l.to_string(), Style::default().fg(Color::DarkGray))
-                    } else {
-                        l.clone()
-                    };
-                    out.push(line);
+                    out.push(l.clone());
                 }
             }
             for l in &msg.rendered_tools {
@@ -288,4 +324,23 @@ fn render_tool_lines(tools: &[ToolCall], _msg_text: &str) -> Vec<Line<'static>> 
 
 fn count_lines(s: &Option<String>) -> usize {
     s.as_ref().map_or(0, |s| s.lines().count())
+}
+
+fn tool_block_line_count(tc: &ToolCall) -> usize {
+    let mut n = 1;
+    if let Some(result) = &tc.result {
+        let lines = result.lines().count();
+        if tc.collapsed {
+            n += COLLAPSED_MAX_LINES.min(lines);
+            if lines > COLLAPSED_MAX_LINES { n += 1; }
+        } else {
+            n += lines;
+        }
+    }
+    n + 1
+}
+
+pub fn msg_line_count(msg: &Message) -> usize {
+    let header = if msg.role == Role::User { 2 } else { 1 };
+    header + msg.thinking_rendered.len() + msg.rendered.len() + msg.rendered_tools.len()
 }
