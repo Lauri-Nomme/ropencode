@@ -179,6 +179,10 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
 
     match evt {
         TermEvent::Key(key) if key.kind == KeyEventKind::Press => match key.code {
+            KeyCode::Enter if key.modifiers.contains(crossterm::event::KeyModifiers::ALT) => {
+                app.input.push('\n');
+                false
+            }
             KeyCode::Enter => {
                 app.flush_errors();
                 let text = app.input.trim().to_string();
@@ -291,7 +295,7 @@ fn render_conversation(f: &mut Frame<'_>, area: Rect, app: &App) {
 }
 
 fn render_input(f: &mut Frame<'_>, area: Rect, app: &App) {
-    let block = Block::default().borders(Borders::TOP).title(" Prompt (Enter send · /help · /model · /exit)");
+    let block = Block::default().borders(Borders::TOP).title(" Prompt (Enter send · Alt+Enter newline · /help · /model · /exit)");
     let text = if app.input.is_empty() {
         Text::from(Line::from(Span::styled("Type your message…", Style::default().fg(Color::DarkGray))))
     } else { Text::from(Line::from(Span::raw(&app.input))) };
