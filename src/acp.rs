@@ -53,7 +53,6 @@ impl Client {
     pub fn spawn(bin: &str) -> Result<(Self, BufReader<std::process::ChildStdout>, BufReader<std::process::ChildStderr>)> {
         let mut child = Command::new(bin)
             .arg("acp")
-            .env("OPENCODE_DISABLE_CHANNEL_DB", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
