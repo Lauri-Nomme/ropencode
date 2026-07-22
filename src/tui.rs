@@ -300,22 +300,29 @@ fn render_input(f: &mut Frame<'_>, area: Rect, app: &App) {
 
 fn render_status(f: &mut Frame<'_>, area: Rect, app: &App) {
     let info = &app.conversation.info;
-    let ctx = if info.ctx_total > 0 { format!("ctx {:.0}%", info.ctx_pct) } else { String::new() };
-    let cost = if info.cost > 0.0 { format!("${:.4}", info.cost) } else { String::new() };
-    let right = [&ctx, &cost].into_iter().filter(|s| !s.is_empty()).cloned().collect::<Vec<_>>().join("  ");
-    let right_w = right.len() + if right.is_empty() { 0 } else { 2 };
+    let ctx_color = if info.ctx_pct >= 90.0 { Color::Red } else if info.ctx_pct >= 70.0 { Color::Yellow } else { Color::DarkGray };
+    let ctx_span = if info.ctx_total > 0 {
+        Some(Span::styled(format!("ctx {:.0}%", info.ctx_pct), Style::default().fg(ctx_color)))
+    } else { None };
+    let cost_span = if info.cost > 0.0 {
+        Some(Span::styled(format!("${:.4}", info.cost), Style::default().fg(Color::DarkGray)))
+    } else { None };
+    let right_spans: Vec<Span> = [ctx_span, cost_span].into_iter().flatten().collect();
+    let right_w: usize = right_spans.iter().map(|s| s.content.len()).sum::<usize>() + if right_spans.is_empty() { 0 } else { 2 };
 
     let model_label = if info.provider != "—" { format!("{}/{}", info.provider, info.model) } else { info.model.clone() };
     let cwd_w = (area.width as usize).saturating_sub(model_label.len() + right_w + 4);
     let cwd = if app.cwd.len() > cwd_w && cwd_w > 5 { format!("…{}", &app.cwd[app.cwd.len().saturating_sub(cwd_w - 1)..]) } else { app.cwd.clone() };
 
-    // Pad with spaces so right-side content is right-aligned
     let left = format!("{model_label}  ·  {cwd}");
-    let pad = (area.width as usize).saturating_sub(left.len() + right.len());
-    let line = format!("{left}{}{right}", " ".repeat(pad));
+    let pad = (area.width as usize).saturating_sub(left.len() + right_w);
+
+    let mut spans = vec![Span::styled(left, Style::default().fg(Color::DarkGray))];
+    if pad > 0 { spans.push(Span::raw(" ".repeat(pad))); }
+    spans.extend(right_spans);
 
     f.render_widget(
-        Paragraph::new(Text::from(Line::from(Span::styled(line, Style::default().fg(Color::DarkGray)))))
+        Paragraph::new(Text::from(Line::from(spans)))
             .block(Block::default().borders(Borders::TOP).border_style(Style::default().fg(Color::DarkGray)))
             .style(Style::default().bg(Color::Rgb(20, 20, 28))),
         area,
