@@ -170,6 +170,30 @@ struct Incoming {
 }
 
 /// Read stderr lines from the subprocess and forward as Error events.
+/// Extract model/provider from a session/new or session/load response.
+pub fn parse_config_options(resp: &serde_json::Value, event_tx: &mpsc::UnboundedSender<Event>) {
+    if let Some(configs) = resp["configOptions"].as_array() {
+        for cfg in configs {
+            if cfg["id"] == "model" {
+                let val = cfg["currentValue"].as_str().unwrap_or("");
+                let parts: Vec<&str> = val.splitn(2, '/').collect();
+                if parts.len() == 2 {
+                    let _ = event_tx.send(Event::ConfigUpdate {
+                        model: Some(parts[1].to_string()),
+                        provider: Some(parts[0].to_string()),
+                    });
+                }
+                if let Some(opts) = cfg["options"].as_array() {
+                    let models: Vec<String> = opts.iter()
+                        .filter_map(|o| o["value"].as_str().map(|s| s.to_string()))
+                        .collect();
+                    let _ = event_tx.send(Event::ModelList(models));
+                }
+            }
+        }
+    }
+}
+
 pub fn start_stderr_reader<R: BufRead + Send + 'static>(
     reader: R,
     tx: mpsc::UnboundedSender<Event>,

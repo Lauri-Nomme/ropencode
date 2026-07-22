@@ -31,30 +31,6 @@ mod cli {
     pub struct Args { pub session_id: Option<String>, pub cwd: Option<String>, pub list_sessions: bool }
 }
 
-fn parse_config_options(resp: &serde_json::Value, event_tx: &mpsc::UnboundedSender<acp::Event>) {
-    if let Some(configs) = resp["configOptions"].as_array() {
-        for cfg in configs {
-            if cfg["id"] == "model" {
-                let val = cfg["currentValue"].as_str().unwrap_or("");
-                let parts: Vec<&str> = val.splitn(2, '/').collect();
-                if parts.len() == 2 {
-                    let _ = event_tx.send(acp::Event::ConfigUpdate {
-                        model: Some(parts[1].to_string()),
-                        provider: Some(parts[0].to_string()),
-                    });
-                }
-                // Send available model list
-                if let Some(opts) = cfg["options"].as_array() {
-                    let models: Vec<String> = opts.iter()
-                        .filter_map(|o| o["value"].as_str().map(|s| s.to_string()))
-                        .collect();
-                    let _ = event_tx.send(acp::Event::ModelList(models));
-                }
-            }
-        }
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = parse_args();
@@ -93,13 +69,13 @@ async fn main() -> Result<()> {
         Some(sid) => {
             eprintln!("Loading session {sid} …");
             let resp = client.load_session(sid, &cwd).await?;
-            parse_config_options(&resp, &event_tx);
+            acp::parse_config_options(&resp, &event_tx);
             sid.clone()
         }
         None => {
             eprintln!("Creating new session …");
             let resp = client.new_session(&cwd).await?;
-            parse_config_options(&resp, &event_tx);
+            acp::parse_config_options(&resp, &event_tx);
             let sid = resp["sessionId"].as_str().context("missing sessionId")?.to_string();
             eprintln!("Session {sid} created");
             sid
@@ -165,7 +141,7 @@ async fn main() -> Result<()> {
                     match client.load_session(&session_id, &cwd).await {
                         Ok(resp) => {
                             let _ = cmd_event_tx.send(acp::Event::SessionCreated { session_id: session_id.clone() });
-                            parse_config_options(&resp, &cmd_event_tx);
+                            acp::parse_config_options(&resp, &cmd_event_tx);
                         }
                         Err(e) => send_error(&cmd_event_tx, format!("load_session: {e}")),
                     }
