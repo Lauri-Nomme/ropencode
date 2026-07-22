@@ -258,7 +258,12 @@ fn render(f: &mut Frame<'_>, app: &mut App) {
     render_input(f, chunks[1], app);
     render_status(f, chunks[2], app);
     if let Mode::ModelPicker { filter, models, selected, scroll: _ } = &app.mode {
-        render_model_picker(f, area, filter.as_str(), models, *selected);
+        let current_model = if app.conversation.info.provider != "—" {
+            format!("{}/{}", app.conversation.info.provider, app.conversation.info.model)
+        } else {
+            app.conversation.info.model.clone()
+        };
+        render_model_picker(f, area, filter.as_str(), models, *selected, &current_model);
     }
     if let Mode::Help = &app.mode {
         render_help(f, area);
@@ -345,7 +350,7 @@ fn render_help(f: &mut Frame<'_>, area: Rect) {
     );
 }
 
-fn render_model_picker(f: &mut Frame<'_>, area: Rect, filter: &str, models: &[String], selected: usize) {
+fn render_model_picker(f: &mut Frame<'_>, area: Rect, filter: &str, models: &[String], selected: usize, current_model: &str) {
     let filtered: Vec<(usize, &String)> = models.iter().enumerate().filter(|(_, m)| m.contains(filter) || filter.is_empty()).collect();
     let view_h = ((area.height / 2).min(20) as usize).max(4);
     let list_h = view_h.saturating_sub(3); // header + filter + footer
@@ -369,8 +374,11 @@ fn render_model_picker(f: &mut Frame<'_>, area: Rect, filter: &str, models: &[St
         let (_, model) = &filtered[i];
         let marker = if i == sel { " ▸" } else { "  " };
         let style = if i == sel { Style::default().fg(Color::Cyan).bg(Color::Rgb(40, 40, 60)) } else { Style::default().bg(Color::Rgb(20, 20, 28)) };
-        let label = if model.len() > (picker_w as usize).saturating_sub(4) { format!("{}…", &model[..(picker_w as usize).saturating_sub(5)]) } else { model.to_string() };
-        lines.push(Line::styled(format!("{marker} {label}"), style));
+        let is_active = !current_model.is_empty() && model.as_str() == current_model;
+        let suffix = if is_active { "  ← active" } else { "" };
+        let label = if model.len() + suffix.len() > (picker_w as usize).saturating_sub(4) { format!("{}…", &model[..(picker_w as usize).saturating_sub(5 + suffix.len()).max(5)]) } else { model.to_string() };
+        let style = if is_active && i != sel { style.fg(Color::Green) } else { style };
+        lines.push(Line::styled(format!("{marker} {label}{suffix}"), style));
     }
     lines.push(Line::from(Span::styled(" Esc cancel · Enter select", Style::default().fg(Color::DarkGray).bg(Color::Rgb(20, 20, 28)))));
     f.render_widget(
