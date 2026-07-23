@@ -336,9 +336,39 @@ impl Conversation {
     }
 }
 
+fn preprocess_tables(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_table = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        let is_table_line = trimmed.starts_with('|') && trimmed.ends_with('|') && trimmed.contains('|');
+        if is_table_line && !in_table {
+            in_table = true;
+            out.push_str("```\n");
+            out.push_str(line);
+            out.push('\n');
+        } else if is_table_line {
+            out.push_str(line);
+            out.push('\n');
+        } else {
+            if in_table {
+                out.push_str("```\n");
+                in_table = false;
+            }
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    if in_table {
+        out.push_str("```\n");
+    }
+    out
+}
+
 fn render_text_lines(text: &str, ss: &ThemeStyleSheet) -> Vec<Line<'static>> {
+    let text = preprocess_tables(text);
     let md = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        from_str_with_options(text, &MdOptions::new(ss.clone()))
+        from_str_with_options(&text, &MdOptions::new(ss.clone()))
     }));
     let Ok(md_text) = md else {
         return vec![Line::from(ratatui::text::Span::raw(text.to_string()))];
