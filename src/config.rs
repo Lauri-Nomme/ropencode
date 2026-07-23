@@ -25,6 +25,7 @@ pub struct Theme {
     pub inline_code_fg: Color,
     pub inline_code_bg: Color,
     pub code_bg: Color,
+    pub syntax_theme: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -64,6 +65,8 @@ impl<'de> Deserialize<'de> for Theme {
             inline_code_bg: String,
             #[serde(default = "default_hex")]
             code_bg: String,
+            #[serde(default = "default_syntax_theme")]
+            syntax_theme: String,
         }
         let raw = RawTheme::deserialize(deserializer)?;
         Ok(Theme {
@@ -80,6 +83,7 @@ impl<'de> Deserialize<'de> for Theme {
             inline_code_fg: parse_hex(&raw.inline_code_fg),
             inline_code_bg: parse_hex(&raw.inline_code_bg),
             code_bg: parse_hex(&raw.code_bg),
+            syntax_theme: raw.syntax_theme,
         })
     }
 }
@@ -100,6 +104,7 @@ impl Default for Theme {
             inline_code_fg: Color::White,
             inline_code_bg: Color::Rgb(40, 40, 52),
             code_bg: Color::Rgb(25, 25, 35),
+            syntax_theme: "base16-ocean.dark".into(),
         }
     }
 }
@@ -134,6 +139,7 @@ fn config_path() -> PathBuf {
 }
 
 fn default_hex() -> String { String::new() }
+fn default_syntax_theme() -> String { "base16-ocean.dark".into() }
 
 pub fn parse_hex(s: &str) -> Color {
     let s = s.trim_start_matches('#');
