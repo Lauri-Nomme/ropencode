@@ -314,6 +314,7 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                             match *cmd {
                                 "exit" => return true,
                                 "help" => { app.mode = Mode::Help; return false; }
+                                "search" => { app.input = "/search ".into(); return false; }
                                 "model" => {
                                     app.mode = Mode::ModelPicker { filter: String::new(), models: app.available_models.clone(), selected: 0, scroll: 0 };
                                     return false;
@@ -352,6 +353,20 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                     app.input.clear();
                     return false;
                 }
+                if text.starts_with("/search") {
+                    let query = text[7..].trim().to_string();
+                    if !query.is_empty() {
+                        app.search_query = Some(query);
+                        app.rebuild_cache();
+                        app.compute_search();
+                    } else {
+                        app.search_query = None;
+                        app.search_matches.clear();
+                        app.search_idx = 0;
+                    }
+                    app.input.clear();
+                    return false;
+                }
                 if text.starts_with("/sessions") {
                     let _ = app.cmd_tx.send(crate::acp::TuiCommand::ListSessions { cwd: app.cwd.clone() });
                     app.input.clear();
@@ -383,6 +398,9 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
             KeyCode::PageDown => { let vh = app.viewport_height.max(1); let max = app.max_scroll(); app.scroll_offset = (app.scroll_offset + vh).min(max); app.check_sticky(); false }
             KeyCode::Home => { app.scroll_offset = 0; app.did_scroll_up(); false }
             KeyCode::End => { app.scroll_offset = app.max_scroll(); app.sticky_bottom = true; false }
+            KeyCode::Esc if app.search_query.is_some() => {
+                app.search_query = None; app.search_matches.clear(); app.search_idx = 0; false
+            }
             KeyCode::Char(c) if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) && c == 'c' => {
                 if app.agent_busy {
                     app.agent_busy = false;
@@ -394,6 +412,11 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                     app.auto_scroll();
                 }
                 false
+            }
+            KeyCode::Char(c) if app.search_query.is_some() && app.input.is_empty() => match c {
+                'n' => { app.search_next(); false }
+                'N' => { app.search_prev(); false }
+                _ => { app.input.push(c); app.cmd_picker_selection = 0; false }
             }
             KeyCode::Char(c) => { app.input.push(c); app.cmd_picker_selection = 0; false }
             _ => false,
@@ -465,7 +488,22 @@ fn render_conversation(f: &mut Frame<'_>, area: Rect, app: &App) {
     let offset = app.scroll_offset.min(total.saturating_sub(1));
     let start = offset;
     let end = (start + area.height as usize).min(total);
-    let mut lines: Vec<Line<'static>> = if start < total { app.cached_lines[start..end].to_vec() } else { vec![] };
+    let mut lines: Vec<Line<'static>> = if start < total {
+        let slice = &app.cached_lines[start..end];
+        if let (Some(query), Some(&match_line)) = (&app.search_query, app.search_matches.get(app.search_idx)) {
+            let q = query.to_lowercase();
+            slice.iter().enumerate().map(|(i, l)| {
+                let global_idx = start + i;
+                if global_idx == match_line {
+                    highlight_line(l, &q, app.theme.selection_bg)
+                } else {
+                    l.clone()
+                }
+            }).collect()
+        } else {
+            slice.to_vec()
+        }
+    } else { vec![] };
     if app.agent_busy && !app.conversation.messages.back().is_some_and(|m| m.streaming) {
         const SPINNER: &[char] = &['⣷', '⣯', '⣟', '⡿', '⢿', '⣻', '⣽', '⣾'];
         let frame = (app.frame / 3) as usize % SPINNER.len();
@@ -474,6 +512,67 @@ fn render_conversation(f: &mut Frame<'_>, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }), area);
     let mut state = ScrollbarState::default().position(offset).content_length(total);
     f.render_stateful_widget(Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight).begin_symbol(Some("↑")).end_symbol(Some("↓")), area, &mut state);
+}
+
+struct SpanInfo {
+    start: usize,
+    end: usize,
+    content: String,
+    style: Style,
+}
+
+fn highlight_line(line: &Line<'static>, query: &str, bg: Color) -> Line<'static> {
+    let spans_info: Vec<SpanInfo> = {
+        let mut pos = 0;
+        line.spans.iter().map(|s| {
+            let content: String = s.content.chars().collect();
+            let info = SpanInfo { start: pos, end: pos + content.len(), content, style: s.style };
+            pos = info.end;
+            info
+        }).collect()
+    };
+    let text: String = spans_info.iter().map(|s| s.content.as_str()).collect();
+    let lower = text.to_lowercase();
+    if !lower.contains(query) {
+        return line.clone().patch_style(Style::default().bg(bg));
+    }
+    let matches: Vec<(usize, usize)> = lower.match_indices(query).map(|(i, m)| (i, i + m.len())).collect();
+    let mut result: Vec<Span<'static>> = Vec::new();
+    let mut text_pos = 0;
+    for &(mstart, mend) in &matches {
+        if mstart > text_pos {
+            for si in &spans_info {
+                if si.start >= mstart { break; }
+                if si.end <= text_pos { continue; }
+                let slice_start = text_pos.max(si.start) - si.start;
+                let slice_end = mstart.min(si.end) - si.start;
+                if slice_end > slice_start {
+                    result.push(Span::styled(si.content[slice_start..slice_end].to_string(), si.style));
+                }
+            }
+        }
+        for si in &spans_info {
+            if si.start >= mend { break; }
+            if si.end <= mstart { continue; }
+            let slice_start = mstart.max(si.start) - si.start;
+            let slice_end = mend.min(si.end) - si.start;
+            if slice_end > slice_start {
+                result.push(Span::styled(si.content[slice_start..slice_end].to_string(), si.style.bg(bg)));
+            }
+        }
+        text_pos = mend;
+    }
+    if text_pos < text.len() {
+        for si in &spans_info {
+            if si.end <= text_pos { continue; }
+            let slice_start = text_pos.max(si.start) - si.start;
+            let slice_end = si.content.len();
+            if slice_end > slice_start {
+                result.push(Span::styled(si.content[slice_start..slice_end].to_string(), si.style));
+            }
+        }
+    }
+    Line::from(result)
 }
 
 fn render_input(f: &mut Frame<'_>, area: Rect, app: &App) {
@@ -496,11 +595,20 @@ fn render_status(f: &mut Frame<'_>, area: Rect, app: &App) {
     let right_spans: Vec<Span> = [ctx_span, cost_span].into_iter().flatten().collect();
     let right_w: usize = right_spans.iter().map(|s| s.content.len()).sum::<usize>() + if right_spans.is_empty() { 0 } else { 2 };
 
+    let search_label = app.search_query.as_ref().map(|q| {
+        let total = app.search_matches.len();
+        let idx = if total > 0 { app.search_idx + 1 } else { 0 };
+        format!("search({}/{total}): {q}", idx)
+    });
     let model_label = if info.provider != "—" { format!("{}/{}", info.provider, info.model) } else { info.model.clone() };
-    let cwd_w = (area.width as usize).saturating_sub(model_label.len() + right_w + 4);
+    let cwd_w = (area.width as usize).saturating_sub(model_label.len() + right_w + 4 + search_label.as_ref().map_or(0, |s| s.len() + 3));
     let cwd = if app.cwd.len() > cwd_w && cwd_w > 5 { format!("…{}", &app.cwd[app.cwd.len().saturating_sub(cwd_w - 1)..]) } else { app.cwd.clone() };
 
-    let left = format!("{model_label}  ·  {cwd}");
+    let left = if let Some(sl) = &search_label {
+        format!("{sl}  ·  {model_label}  ·  {cwd}")
+    } else {
+        format!("{model_label}  ·  {cwd}")
+    };
     let pad = (area.width as usize).saturating_sub(left.len() + right_w);
 
     let mut spans = vec![Span::styled(left, Style::default().fg(app.theme.thinking_color))];
@@ -517,7 +625,7 @@ fn render_status(f: &mut Frame<'_>, area: Rect, app: &App) {
 
 fn render_help(f: &mut Frame<'_>, area: Rect, app: &App) {
     let w = area.width.saturating_sub(4).min(60);
-    let h = 18u16;
+    let h = 20u16;
     let x = (area.width - w) / 2;
     let y = (area.height - h) / 2;
     let t = &app.theme;
@@ -526,6 +634,8 @@ fn render_help(f: &mut Frame<'_>, area: Rect, app: &App) {
         Line::from(Span::raw("")),
         Line::from(Span::styled("  /help       Show this help screen", Style::default().fg(t.thinking_color))),
         Line::from(Span::styled("  /model      Open model picker", Style::default().fg(t.thinking_color))),
+        Line::from(Span::styled("  /search     Search conversation text", Style::default().fg(t.thinking_color))),
+        Line::from(Span::styled("  /sessions   List and switch sessions", Style::default().fg(t.thinking_color))),
         Line::from(Span::styled("  /exit       Quit", Style::default().fg(t.thinking_color))),
         Line::from(Span::raw("")),
         Line::from(Span::styled(" Keybindings", Style::default().fg(t.accent_color))),
@@ -534,7 +644,8 @@ fn render_help(f: &mut Frame<'_>, area: Rect, app: &App) {
         Line::from(Span::styled("  PgUp/PgDn   Page scroll", Style::default().fg(t.thinking_color))),
         Line::from(Span::styled("  Home/End    Jump to top/bottom", Style::default().fg(t.thinking_color))),
         Line::from(Span::styled("  Tab         Expand/collapse tool output", Style::default().fg(t.thinking_color))),
-        Line::from(Span::styled("  Esc         Close overlays", Style::default().fg(t.thinking_color))),
+        Line::from(Span::styled("  n/N         Next/prev search match", Style::default().fg(t.thinking_color))),
+        Line::from(Span::styled("  Esc         Close overlays / clear search", Style::default().fg(t.thinking_color))),
         Line::from(Span::raw("")),
         Line::from(Span::styled(" Press Esc or Enter to close", Style::default().fg(t.thinking_color))),
     ];
