@@ -17,8 +17,8 @@ use tokio::sync::mpsc;
 
 const STATUS_HEIGHT: usize = 2;
 const ERROR_COALESCE_MS: u64 = 600;
-const COMMANDS: &[&str] = &["exit", "help", "model", "sessions"];
-const CMD_DESCRIPTIONS: &[&str] = &["Quit", "Show help", "Open model picker", "List sessions"];
+const COMMANDS: &[&str] = &["exit", "help", "model", "sessions", "search"];
+const CMD_DESCRIPTIONS: &[&str] = &["Quit", "Show help", "Open model picker", "List sessions", "Search conversation"];
 
 enum Mode { Normal, ModelPicker { filter: String, models: Vec<String>, selected: usize, scroll: usize }, Help, SessionPicker { filter: String, sessions: Vec<crate::acp::SessionEntry>, selected: usize, scroll: usize } }
 
@@ -35,6 +35,9 @@ struct App {
     stream_buffer: String,
     pending_created_at: Option<String>,
     cmd_picker_selection: usize,
+    search_query: Option<String>,
+    search_matches: Vec<usize>,
+    search_idx: usize,
 }
 
 impl App {
@@ -48,6 +51,9 @@ impl App {
             stream_buffer: String::new(),
             pending_created_at: None,
             cmd_picker_selection: 0,
+            search_query: None,
+            search_matches: vec![],
+            search_idx: 0,
         }
     }
 
@@ -61,6 +67,43 @@ impl App {
     fn auto_scroll(&mut self) { self.rebuild_cache(); if self.sticky_bottom { self.scroll_offset = self.max_scroll(); } }
     fn did_scroll_up(&mut self) { self.sticky_bottom = false; }
     fn check_sticky(&mut self) { if self.is_at_bottom() { self.sticky_bottom = true; } }
+
+    fn compute_search(&mut self) {
+        self.search_matches.clear();
+        self.search_idx = 0;
+        let query = match &self.search_query {
+            Some(q) if !q.is_empty() => q.to_lowercase(),
+            _ => { self.search_query = None; return; }
+        };
+        for (i, line) in self.cached_lines.iter().enumerate() {
+            let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+            if text.to_lowercase().contains(&query) {
+                self.search_matches.push(i);
+            }
+        }
+    }
+
+    fn search_next(&mut self) {
+        if self.search_matches.is_empty() { return; }
+        self.search_idx = (self.search_idx + 1) % self.search_matches.len();
+        let target = self.search_matches[self.search_idx];
+        let vh = self.viewport_height.max(1);
+        self.scroll_offset = target.saturating_sub(vh / 2);
+        self.sticky_bottom = false;
+    }
+
+    fn search_prev(&mut self) {
+        if self.search_matches.is_empty() { return; }
+        self.search_idx = if self.search_idx == 0 {
+            self.search_matches.len() - 1
+        } else {
+            self.search_idx - 1
+        };
+        let target = self.search_matches[self.search_idx];
+        let vh = self.viewport_height.max(1);
+        self.scroll_offset = target.saturating_sub(vh / 2);
+        self.sticky_bottom = false;
+    }
 
     fn flush_stream_buffer(&mut self) {
         if self.stream_buffer.is_empty() { return; }

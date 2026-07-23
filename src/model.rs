@@ -349,10 +349,23 @@ fn render_text_lines(text: &str, ss: &ThemeStyleSheet) -> Vec<Line<'static>> {
     for line in md_text.lines.iter() {
         let text_content: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
         if text_content.starts_with("```") {
-            in_code = !in_code;
-            is_diff = in_code && text_content.len() > 6 && text_content[3..].trim() == "diff";
+            if in_code {
+                out.push(Line::styled(" ╰─╯", Style::default().fg(Color::DarkGray).bg(ss.code_bg)));
+                in_code = false;
+                is_diff = false;
+            } else {
+                let lang = text_content[3..].trim();
+                if lang.is_empty() {
+                    out.push(Line::styled(" ╭─╮", Style::default().fg(ss.heading_fg).bg(ss.code_bg)));
+                } else {
+                    out.push(Line::styled(format!(" ╭─ {} ─╮", lang), Style::default().fg(ss.heading_fg).bg(ss.code_bg)));
+                }
+                in_code = true;
+                is_diff = lang == "diff";
+            }
+            continue;
         }
-        let line_fg = if is_diff && in_code {
+        let line_fg = if is_diff {
             let trimmed = text_content.trim_start();
             if trimmed.starts_with('+') && !trimmed.starts_with("+++") {
                 Color::Green
@@ -366,7 +379,7 @@ fn render_text_lines(text: &str, ss: &ThemeStyleSheet) -> Vec<Line<'static>> {
         } else {
             Color::White
         };
-        let line_style = if is_diff && in_code {
+        let line_style = if is_diff {
             Style::default().fg(line_fg)
         } else {
             Style::default()
@@ -376,7 +389,7 @@ fn render_text_lines(text: &str, ss: &ThemeStyleSheet) -> Vec<Line<'static>> {
             ratatui::text::Span::styled(content, line_style.patch(s.style))
         }).collect();
         let mut line = Line::from(owned);
-        if in_code || text_content.starts_with("```") {
+        if in_code {
             line = line.patch_style(Style::default().bg(ss.code_bg));
         }
         out.push(line);
