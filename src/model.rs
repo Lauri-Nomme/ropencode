@@ -14,6 +14,7 @@ pub struct ThemeStyleSheet {
     blockquote_fg: Color,
     inline_code_fg: Color,
     inline_code_bg: Color,
+    pub code_bg: Color,
 }
 
 impl ThemeStyleSheet {
@@ -24,6 +25,7 @@ impl ThemeStyleSheet {
             blockquote_fg: theme.blockquote_fg,
             inline_code_fg: theme.inline_code_fg,
             inline_code_bg: theme.inline_code_bg,
+            code_bg: theme.code_bg,
         }
     }
 }
@@ -58,7 +60,6 @@ impl StyleSheet for ThemeStyleSheet {
 impl Conversation {
     pub fn set_theme(&mut self, theme: &Theme) {
         self.stylesheet = ThemeStyleSheet::from_theme(theme);
-        self.code_bg = theme.code_bg;
     }
 }
 
@@ -127,7 +128,6 @@ pub struct Conversation {
     pub error: Option<String>,
     thinking_msg_idx: Option<usize>,
     stylesheet: ThemeStyleSheet,
-    code_bg: Color,
 }
 
 pub fn global_line_to_tool_call<'a>(messages: &'a VecDeque<Message>, line_idx: usize) -> Option<(usize, usize)> {
@@ -161,7 +161,6 @@ impl Conversation {
         Self {
             messages: VecDeque::new(), total_lines: 0, info: SessionInfo::default(), error: None, thinking_msg_idx: None,
             stylesheet: ThemeStyleSheet::from_theme(&Theme::default()),
-            code_bg: Theme::default().code_bg,
         }
     }
 
@@ -345,12 +344,21 @@ fn render_text_lines(text: &str, ss: &ThemeStyleSheet) -> Vec<Line<'static>> {
         return vec![Line::from(ratatui::text::Span::raw(text.to_string()))];
     };
     let mut out = Vec::new();
+    let mut in_code = false;
     for line in md_text.lines.iter() {
+        let text_content: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        if text_content.starts_with("```") {
+            in_code = !in_code;
+        }
         let owned: Vec<_> = line.spans.iter().map(|s| {
             let content: String = s.content.chars().collect();
             ratatui::text::Span::styled(content, s.style)
         }).collect();
-        out.push(Line::from(owned));
+        let mut line = Line::from(owned);
+        if in_code || text_content.starts_with("```") {
+            line = line.patch_style(Style::default().bg(ss.code_bg));
+        }
+        out.push(line);
     }
     out
 }
