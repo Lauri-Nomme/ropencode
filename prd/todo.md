@@ -243,11 +243,121 @@ Throughout the codebase. E.g., `acp.rs:74` (`pending.lock().unwrap()`), `tui.rs:
 
 ---
 
+## Rendering & Visual Polish
+
+### R1. Code block background fill
+**File:** `src/model.rs` (`render_text_lines`/`rendered_lines`)
+
+Code blocks render with raw `\`\`\`` fence markers as visible text. No background fill distinguishes them from prose, making multi-block conversations hard to scan.
+
+**Fix:** Either (a) patch lines post-`tui-markdown` to detect code block lines and apply a background span/style, or (b) build a custom `StyleSheet` (R2) that sets code block background. Tui-markdown supports custom stylesheets via `from_str_with_options()`.
+
+**Priority:** High
+
+---
+
+### R2. Custom tui-markdown stylesheet
+**File:** `src/model.rs`, `src/config.rs`
+
+`tui-markdown::from_str()` uses the hardcoded `DefaultStyleSheet` — code block bg (none), inline code (`white.on_black`), headings (cyan variants), links (blue underline). None of these respect the user's theme from `config.toml`.
+
+**Fix:** Switch to `tui_markdown::from_str_with_options(text, &Options::default().stylesheet(MyStyleSheet))` where `MyStyleSheet` extracts colors from the `Theme` struct. Wire inline code, headings, blockquotes, links to configurable theme fields.
+
+**Priority:** High
+
+---
+
+### R3. Configurable syntax theme
+**File:** `src/config.rs`, `src/model.rs`
+
+Currently `tui-markdown` uses syntect's `base16-ocean.dark` theme. No way to switch to a light theme or a different dark theme.
+
+**Fix:** Add `syntax_theme = "base16-ocean.dark"` (or similar) to `config.toml [theme]`. Pass the selected `SyntaxTheme` through `tui-markdown`'s options or build a custom `StyleSheet` that applies a different syntect theme.
+
+**Priority:** Medium
+
+---
+
+### R4. Search within conversation
+**File:** `src/tui.rs` (input handling, search overlay)
+
+No way to find text in the current conversation output without scrolling manually.
+
+**Fix:** Add `/search <query>` command. Collect all rendered text from visible messages and find matches. Highlight matches in the conversation. Show match count / position indicator. Support `n`/`N` (next/prev match) or arrow keys.
+
+**Priority:** Medium
+
+---
+
+### R5. Diff rendering
+**File:** `src/model.rs`, `src/tui.rs`
+
+When the assistant outputs git diffs (e.g., from writing code), they're rendered as plain markdown code blocks. No +/- coloring, no hunk headers, no visual structure that makes diffs scannable.
+
+**Fix:** Detect code blocks whose language info string matches `diff` (already handled by tui-markdown/syntect with `base16-ocean.dark` which has a grammar for diff). For a more polished approach, parse diff lines and color them manually: `+` lines in green, `-` lines in red, `@@` hunk headers in cyan.
+
+**Priority:** High
+
+---
+
+### R6. Clickable / selectable links
+**File:** `src/tui.rs`
+
+`tui-markdown` renders links as `[text](url)` — the URL is shown in parentheses next to the link text. Users cannot click or easily copy the URL.
+
+**Fix:** Options: (a) Show link text only, with URL hidden but copyable via a keybinding, (b) use ratatui's mouse handling to detect clicks on link lines and open the URL via `xdg-open`/`open`, (c) render links as `text [url]` where url is styled for visibility.
+
+**Priority:** Low
+
+---
+
+### R7. Table rendering
+**File:** `src/model.rs`
+
+`tui-markdown` has basic table support, but rendering may be inconsistent (column alignment, wrapping in narrow terminals). No visual grid lines.
+
+**Fix:** Evaluate if tables look acceptable. If not, consider pre-processing markdown to make tables more readable (e.g., spacing columns, adding visual separators).
+
+**Priority:** Low
+
+---
+
+### R8. Better code block header
+**File:** `src/model.rs`
+
+Currently code blocks show `\`\`\`lang\n<code>\n\`\`\``. The fence markers take up lines and look noisy. Want something like:
+
+```
+ ┌─ rust ─────────────────────────────┐
+ │ fn main() {                         │
+ │     println!("hello");              │
+ │ }                                   │
+ └─────────────────────────────────────┘
+```
+
+**Fix:** After `tui-markdown` rendering, detect code block lines (fence open/close + content between) and replace with a styled "window" border using ratatui `Line` with box-drawing characters. Language label in the top-right corner.
+
+**Priority:** Medium
+
+---
+
+### R9. Selection / copy support
+**File:** `src/tui.rs`
+
+No way to select and copy text from the conversation. Users who want to copy code or responses must reach for the terminal's scrollback.
+
+**Fix:** Enable crossterm's `EnableBracketedPaste` and implement selection tracking (start/end coordinates). Render selected text with inverted or highlighted background. Copy on Ctrl+C or via mouse selection. Use `arboard` or clipboards crate for clipboard access.
+
+**Priority:** Low
+
+---
+
 ## Execution Order
 
 1. **Bugs** (B1→B2→B3→B4→B5)
 2. **High-priority UX** (U1→U2→U3→U5→U6→U4)
-3. **Polish** (P1→P2→P3)
-4. **Technical debt** (T1→T2→T3→T4)
+3. **Rendering** (R2→R1→R5→R3→R8→R4→R6→R7→R9)
+4. **Polish** (P1→P2→P3)
+5. **Technical debt** (T1→T2→T3→T4)
 
 Each item is a single commit.

@@ -135,6 +135,7 @@ pub async fn run(
     crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen, crossterm::event::EnableMouseCapture)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
     let mut app = App::new(cwd, cmd_tx, theme);
+    app.conversation.set_theme(&app.theme);
     let res = run_loop(&mut terminal, &mut app, event_rx).await;
     crossterm::terminal::disable_raw_mode()?;
     crossterm::execute!(terminal.backend_mut(), crossterm::terminal::LeaveAlternateScreen, crossterm::event::DisableMouseCapture)?;
@@ -212,6 +213,7 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                         };
                         if let Some(session_id) = sid {
                             app.conversation = Conversation::new();
+                            app.conversation.set_theme(&app.theme);
                             app.conversation.info.cwd = app.cwd.clone();
                             app.content_version = 0;
                             app.cached_lines.clear();

@@ -1,8 +1,66 @@
+use crate::config::Theme;
 use ratatui::style::{Color, Style};
 use ratatui::text::Line;
 use std::collections::VecDeque;
+use tui_markdown::StyleSheet;
+use tui_markdown::{from_str_with_options, Options as MdOptions};
 
 const COLLAPSED_MAX_LINES: usize = 5;
+
+#[derive(Clone)]
+pub struct ThemeStyleSheet {
+    heading_fg: Color,
+    link_fg: Color,
+    blockquote_fg: Color,
+    inline_code_fg: Color,
+    inline_code_bg: Color,
+}
+
+impl ThemeStyleSheet {
+    pub fn from_theme(theme: &Theme) -> Self {
+        Self {
+            heading_fg: theme.heading_fg,
+            link_fg: theme.link_fg,
+            blockquote_fg: theme.blockquote_fg,
+            inline_code_fg: theme.inline_code_fg,
+            inline_code_bg: theme.inline_code_bg,
+        }
+    }
+}
+
+impl StyleSheet for ThemeStyleSheet {
+    fn heading(&self, level: u8) -> Style {
+        match level {
+            1 => Style::new().fg(self.heading_fg).bold().underlined(),
+            2 => Style::new().fg(self.heading_fg).bold(),
+            3 => Style::new().fg(self.heading_fg).bold().italic(),
+            4..=6 => Style::new().fg(self.heading_fg).italic(),
+            _ => Style::new().fg(self.heading_fg).italic(),
+        }
+    }
+    fn code(&self) -> Style {
+        Style::new().fg(self.inline_code_fg).bg(self.inline_code_bg)
+    }
+    fn link(&self) -> Style {
+        Style::new().fg(self.link_fg).underlined()
+    }
+    fn blockquote(&self) -> Style {
+        Style::new().fg(self.blockquote_fg)
+    }
+    fn heading_meta(&self) -> Style {
+        Style::new().dim()
+    }
+    fn metadata_block(&self) -> Style {
+        Style::new().light_yellow()
+    }
+}
+
+impl Conversation {
+    pub fn set_theme(&mut self, theme: &Theme) {
+        self.stylesheet = ThemeStyleSheet::from_theme(theme);
+        self.code_bg = theme.code_bg;
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ToolCall {
@@ -68,6 +126,8 @@ pub struct Conversation {
     pub info: SessionInfo,
     pub error: Option<String>,
     thinking_msg_idx: Option<usize>,
+    stylesheet: ThemeStyleSheet,
+    code_bg: Color,
 }
 
 pub fn global_line_to_tool_call<'a>(messages: &'a VecDeque<Message>, line_idx: usize) -> Option<(usize, usize)> {
@@ -98,11 +158,15 @@ pub fn global_line_to_tool_call<'a>(messages: &'a VecDeque<Message>, line_idx: u
 
 impl Conversation {
     pub fn new() -> Self {
-        Self { messages: VecDeque::new(), total_lines: 0, info: SessionInfo::default(), error: None, thinking_msg_idx: None }
+        Self {
+            messages: VecDeque::new(), total_lines: 0, info: SessionInfo::default(), error: None, thinking_msg_idx: None,
+            stylesheet: ThemeStyleSheet::from_theme(&Theme::default()),
+            code_bg: Theme::default().code_bg,
+        }
     }
 
     pub fn add_user_message(&mut self, text: &str, created_at: Option<&str>) {
-        let rendered = render_text_lines(text);
+        let rendered = render_text_lines(text, &self.stylesheet);
         let lines = rendered.len() + 2;
         self.total_lines += lines;
         let time = ts_or_now(created_at);
@@ -148,7 +212,7 @@ impl Conversation {
         let old_lines = self.messages[last].rendered.len();
         self.messages[last].text.push_str(delta);
         let full = self.messages[last].text.clone();
-        self.messages[last].rendered = render_text_lines(&full);
+        self.messages[last].rendered = render_text_lines(&full, &self.stylesheet);
         let new_lines = self.messages[last].rendered.len();
         if new_lines > old_lines {
             self.total_lines += new_lines - old_lines;
@@ -163,7 +227,7 @@ impl Conversation {
         let last = self.thinking_msg_idx.unwrap();
         self.messages[last].is_thinking = true;
         self.messages[last].thinking_text.push_str(delta);
-        let rendered = render_text_lines(delta);
+        let rendered = render_text_lines(delta, &self.stylesheet);
         self.total_lines += rendered.len();
         self.messages[last].thinking_rendered.extend(rendered);
     }
@@ -273,13 +337,15 @@ impl Conversation {
     }
 }
 
-fn render_text_lines(text: &str) -> Vec<Line<'static>> {
-    let md = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tui_markdown::from_str(text)));
-    let Ok(text) = md else {
+fn render_text_lines(text: &str, ss: &ThemeStyleSheet) -> Vec<Line<'static>> {
+    let md = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        from_str_with_options(text, &MdOptions::new(ss.clone()))
+    }));
+    let Ok(md_text) = md else {
         return vec![Line::from(ratatui::text::Span::raw(text.to_string()))];
     };
     let mut out = Vec::new();
-    for line in text.lines.iter() {
+    for line in md_text.lines.iter() {
         let owned: Vec<_> = line.spans.iter().map(|s| {
             let content: String = s.content.chars().collect();
             ratatui::text::Span::styled(content, s.style)

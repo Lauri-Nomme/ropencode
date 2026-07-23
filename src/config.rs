@@ -19,6 +19,12 @@ pub struct Theme {
     pub thinking_color: Color,
     pub accent_color: Color,
     pub selection_bg: Color,
+    pub heading_fg: Color,
+    pub link_fg: Color,
+    pub blockquote_fg: Color,
+    pub inline_code_fg: Color,
+    pub inline_code_bg: Color,
+    pub code_bg: Color,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -46,6 +52,18 @@ impl<'de> Deserialize<'de> for Theme {
             thinking_color: String,
             #[serde(default = "default_hex")]
             accent_color: String,
+            #[serde(default = "default_hex")]
+            heading_fg: String,
+            #[serde(default = "default_hex")]
+            link_fg: String,
+            #[serde(default = "default_hex")]
+            blockquote_fg: String,
+            #[serde(default = "default_hex")]
+            inline_code_fg: String,
+            #[serde(default = "default_hex")]
+            inline_code_bg: String,
+            #[serde(default = "default_hex")]
+            code_bg: String,
         }
         let raw = RawTheme::deserialize(deserializer)?;
         Ok(Theme {
@@ -56,6 +74,12 @@ impl<'de> Deserialize<'de> for Theme {
             thinking_color: parse_hex(&raw.thinking_color),
             accent_color: parse_hex(&raw.accent_color),
             selection_bg: Color::Rgb(40, 40, 60),
+            heading_fg: parse_hex(&raw.heading_fg),
+            link_fg: parse_hex(&raw.link_fg),
+            blockquote_fg: parse_hex(&raw.blockquote_fg),
+            inline_code_fg: parse_hex(&raw.inline_code_fg),
+            inline_code_bg: parse_hex(&raw.inline_code_bg),
+            code_bg: parse_hex(&raw.code_bg),
         })
     }
 }
@@ -70,6 +94,12 @@ impl Default for Theme {
             thinking_color: Color::DarkGray,
             accent_color: Color::Cyan,
             selection_bg: Color::Rgb(40, 40, 60),
+            heading_fg: Color::Cyan,
+            link_fg: Color::Rgb(80, 160, 255),
+            blockquote_fg: Color::Green,
+            inline_code_fg: Color::White,
+            inline_code_bg: Color::Rgb(40, 40, 52),
+            code_bg: Color::Rgb(25, 25, 35),
         }
     }
 }
