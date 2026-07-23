@@ -413,6 +413,10 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                 }
                 false
             }
+            KeyCode::Char('o') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) && app.input.is_empty() => {
+                open_url_at_offset(app, app.scroll_offset + app.viewport_height / 2);
+                false
+            }
             KeyCode::Char(c) if app.search_query.is_some() && app.input.is_empty() => match c {
                 'n' => { app.search_next(); false }
                 'N' => { app.search_prev(); false }
@@ -512,6 +516,21 @@ fn render_conversation(f: &mut Frame<'_>, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }), area);
     let mut state = ScrollbarState::default().position(offset).content_length(total);
     f.render_stateful_widget(Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight).begin_symbol(Some("↑")).end_symbol(Some("↓")), area, &mut state);
+}
+
+fn open_url_at_offset(app: &App, line_idx: usize) {
+    let line = app.cached_lines.get(line_idx).map(|l| {
+        let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+        s
+    });
+    let Some(text) = line else { return };
+    for prefix in &["https://", "http://"] {
+        if let Some(start) = text.find(prefix) {
+            let url: String = text[start..].chars().take_while(|c| !c.is_whitespace() && *c != ')').collect();
+            let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+            return;
+        }
+    }
 }
 
 struct SpanInfo {
@@ -645,6 +664,7 @@ fn render_help(f: &mut Frame<'_>, area: Rect, app: &App) {
         Line::from(Span::styled("  Home/End    Jump to top/bottom", Style::default().fg(t.thinking_color))),
         Line::from(Span::styled("  Tab         Expand/collapse tool output", Style::default().fg(t.thinking_color))),
         Line::from(Span::styled("  n/N         Next/prev search match", Style::default().fg(t.thinking_color))),
+        Line::from(Span::styled("  Ctrl+O      Open URL at viewport center", Style::default().fg(t.thinking_color))),
         Line::from(Span::styled("  Esc         Close overlays / clear search", Style::default().fg(t.thinking_color))),
         Line::from(Span::raw("")),
         Line::from(Span::styled(" Press Esc or Enter to close", Style::default().fg(t.thinking_color))),
