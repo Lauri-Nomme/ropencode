@@ -345,14 +345,35 @@ fn render_text_lines(text: &str, ss: &ThemeStyleSheet) -> Vec<Line<'static>> {
     };
     let mut out = Vec::new();
     let mut in_code = false;
+    let mut is_diff = false;
     for line in md_text.lines.iter() {
         let text_content: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
         if text_content.starts_with("```") {
             in_code = !in_code;
+            is_diff = in_code && text_content.len() > 6 && text_content[3..].trim() == "diff";
         }
+        let line_fg = if is_diff && in_code {
+            let trimmed = text_content.trim_start();
+            if trimmed.starts_with('+') && !trimmed.starts_with("+++") {
+                Color::Green
+            } else if trimmed.starts_with('-') && !trimmed.starts_with("---") {
+                Color::Red
+            } else if trimmed.starts_with("@@") {
+                ss.heading_fg
+            } else {
+                Color::White
+            }
+        } else {
+            Color::White
+        };
+        let line_style = if is_diff && in_code {
+            Style::default().fg(line_fg)
+        } else {
+            Style::default()
+        };
         let owned: Vec<_> = line.spans.iter().map(|s| {
             let content: String = s.content.chars().collect();
-            ratatui::text::Span::styled(content, s.style)
+            ratatui::text::Span::styled(content, line_style.patch(s.style))
         }).collect();
         let mut line = Line::from(owned);
         if in_code || text_content.starts_with("```") {
