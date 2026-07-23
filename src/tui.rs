@@ -38,6 +38,8 @@ struct App {
     search_query: Option<String>,
     search_matches: Vec<usize>,
     search_idx: usize,
+    sel_active: bool,
+    sel_anchor: usize,
 }
 
 impl App {
@@ -54,6 +56,8 @@ impl App {
             search_query: None,
             search_matches: vec![],
             search_idx: 0,
+            sel_active: false,
+            sel_anchor: 0,
         }
     }
 
@@ -398,6 +402,9 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
             KeyCode::PageDown => { let vh = app.viewport_height.max(1); let max = app.max_scroll(); app.scroll_offset = (app.scroll_offset + vh).min(max); app.check_sticky(); false }
             KeyCode::Home => { app.scroll_offset = 0; app.did_scroll_up(); false }
             KeyCode::End => { app.scroll_offset = app.max_scroll(); app.sticky_bottom = true; false }
+            KeyCode::Esc if app.sel_active => {
+                app.sel_active = false; false
+            }
             KeyCode::Esc if app.search_query.is_some() => {
                 app.search_query = None; app.search_matches.clear(); app.search_idx = 0; false
             }
@@ -411,6 +418,16 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                     app.mark_dirty();
                     app.auto_scroll();
                 }
+                false
+            }
+            KeyCode::Char('v') if app.input.is_empty() && app.search_query.is_none() => {
+                app.sel_active = !app.sel_active;
+                app.sel_anchor = app.scroll_offset + app.viewport_height / 2;
+                false
+            }
+            KeyCode::Char('y') if app.sel_active && app.input.is_empty() => {
+                yank_selection(app);
+                app.sel_active = false;
                 false
             }
             KeyCode::Char('o') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) && app.input.is_empty() => {
@@ -492,21 +509,25 @@ fn render_conversation(f: &mut Frame<'_>, area: Rect, app: &App) {
     let offset = app.scroll_offset.min(total.saturating_sub(1));
     let start = offset;
     let end = (start + area.height as usize).min(total);
+    let sel_lo = if app.sel_active { app.sel_anchor.min(app.scroll_offset + app.viewport_height / 2) } else { 0 };
+    let sel_hi = if app.sel_active { app.sel_anchor.max(app.scroll_offset + app.viewport_height / 2) } else { 0 };
     let mut lines: Vec<Line<'static>> = if start < total {
         let slice = &app.cached_lines[start..end];
-        if let (Some(query), Some(&match_line)) = (&app.search_query, app.search_matches.get(app.search_idx)) {
-            let q = query.to_lowercase();
-            slice.iter().enumerate().map(|(i, l)| {
-                let global_idx = start + i;
-                if global_idx == match_line {
-                    highlight_line(l, &q, app.theme.selection_bg)
-                } else {
-                    l.clone()
+        let search_highlight = app.search_query.as_ref().and_then(|q| app.search_matches.get(app.search_idx).map(|&m| (q.clone(), m)));
+        slice.iter().enumerate().map(|(i, l)| {
+            let global_idx = start + i;
+            let in_sel = app.sel_active && global_idx >= sel_lo && global_idx <= sel_hi;
+            if let Some((ref q, m)) = search_highlight {
+                if global_idx == m {
+                    return highlight_line(l, &q.to_lowercase(), app.theme.selection_bg);
                 }
-            }).collect()
-        } else {
-            slice.to_vec()
-        }
+            }
+            if in_sel {
+                l.clone().patch_style(Style::default().bg(app.theme.selection_bg))
+            } else {
+                l.clone()
+            }
+        }).collect()
     } else { vec![] };
     if app.agent_busy && !app.conversation.messages.back().is_some_and(|m| m.streaming) {
         const SPINNER: &[char] = &['⣷', '⣯', '⣟', '⡿', '⢿', '⣻', '⣽', '⣾'];
@@ -516,6 +537,36 @@ fn render_conversation(f: &mut Frame<'_>, area: Rect, app: &App) {
     f.render_widget(Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }), area);
     let mut state = ScrollbarState::default().position(offset).content_length(total);
     f.render_stateful_widget(Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight).begin_symbol(Some("↑")).end_symbol(Some("↓")), area, &mut state);
+}
+
+fn yank_selection(app: &App) {
+    let center = app.scroll_offset + app.viewport_height / 2;
+    let (start, end) = if center < app.sel_anchor { (center, app.sel_anchor) } else { (app.sel_anchor, center) };
+    let text: String = app.cached_lines[start..=end.min(app.cached_lines.len().saturating_sub(1))]
+        .iter().map(|l| {
+            let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+            s
+        }).collect::<Vec<_>>().join("\n");
+    use std::io::Write;
+    let _ = std::io::stdout().write_all(format!("\x1b]52;c;{}\x07", base64(&text)).as_bytes());
+    let _ = std::io::stdout().flush();
+}
+
+fn base64(data: &str) -> String {
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let bytes = data.as_bytes();
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(CHARS[((triple >> 18) & 0x3F) as usize] as char);
+        out.push(CHARS[((triple >> 12) & 0x3F) as usize] as char);
+        if chunk.len() > 1 { out.push(CHARS[((triple >> 6) & 0x3F) as usize] as char); } else { out.push('='); }
+        if chunk.len() > 2 { out.push(CHARS[(triple & 0x3F) as usize] as char); } else { out.push('='); }
+    }
+    out
 }
 
 fn open_url_at_offset(app: &App, line_idx: usize) {
@@ -665,7 +716,9 @@ fn render_help(f: &mut Frame<'_>, area: Rect, app: &App) {
         Line::from(Span::styled("  Tab         Expand/collapse tool output", Style::default().fg(t.thinking_color))),
         Line::from(Span::styled("  n/N         Next/prev search match", Style::default().fg(t.thinking_color))),
         Line::from(Span::styled("  Ctrl+O      Open URL at viewport center", Style::default().fg(t.thinking_color))),
-        Line::from(Span::styled("  Esc         Close overlays / clear search", Style::default().fg(t.thinking_color))),
+        Line::from(Span::styled("  v           Start/stop text selection", Style::default().fg(t.thinking_color))),
+        Line::from(Span::styled("  y           Copy selected text to clipboard", Style::default().fg(t.thinking_color))),
+        Line::from(Span::styled("  Esc         Close overlays / clear search / cancel selection", Style::default().fg(t.thinking_color))),
         Line::from(Span::raw("")),
         Line::from(Span::styled(" Press Esc or Enter to close", Style::default().fg(t.thinking_color))),
     ];
