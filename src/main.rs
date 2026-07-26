@@ -65,6 +65,8 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    let cfg = config::Config::load();
+
     let session_id = match &args.session_id {
         Some(sid) => {
             eprintln!("Loading session {sid} …");
@@ -81,6 +83,10 @@ async fn main() -> Result<()> {
             sid
         }
     };
+
+    if let Some(model) = &cfg.defaults.model {
+        let _ = client.set_model(&session_id, model).await;
+    }
 
     // Command handler: forwards prompts from TUI to ACP
     let sid_for_cmd = session_id.clone();
@@ -169,6 +175,5 @@ async fn main() -> Result<()> {
         }
     });
 
-    let cfg = config::Config::load();
     tui::run(event_rx, cmd_tx.clone(), cwd, cfg.theme).await
 }
