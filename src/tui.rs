@@ -40,6 +40,9 @@ struct App {
     search_idx: usize,
     sel_active: bool,
     sel_anchor: usize,
+    input_history: Vec<String>,
+    history_idx: Option<usize>,
+    saved_draft: String,
 }
 
 impl App {
@@ -58,6 +61,9 @@ impl App {
             search_idx: 0,
             sel_active: false,
             sel_anchor: 0,
+            input_history: Vec::new(),
+            history_idx: None,
+            saved_draft: String::new(),
         }
     }
 
@@ -377,6 +383,9 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                     return false;
                 }
                 if !text.is_empty() {
+                    app.input_history.push(text.clone());
+                    if app.input_history.len() > 100 { app.input_history.remove(0); }
+                    app.history_idx = None;
                     app.conversation.add_user_message(&text, None); app.mark_dirty();
                     app.input.clear(); app.sticky_bottom = true;
                     app.rebuild_cache(); app.scroll_offset = app.max_scroll();
@@ -395,6 +404,36 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                     app.mark_dirty(); app.rebuild_cache();
                 }
                 false
+            }
+            KeyCode::Up if key.modifiers.contains(crossterm::event::KeyModifiers::ALT) => {
+                if app.input_history.is_empty() { false }
+                else {
+                    let idx = match app.history_idx {
+                        None => { app.saved_draft = app.input.clone(); Some(app.input_history.len() - 1) }
+                        Some(i) if i > 0 => Some(i - 1),
+                        _ => None,
+                    };
+                    if let Some(i) = idx {
+                        app.input = app.input_history[i].clone();
+                        app.history_idx = Some(i);
+                    }
+                    false
+                }
+            }
+            KeyCode::Down if key.modifiers.contains(crossterm::event::KeyModifiers::ALT) => {
+                match app.history_idx {
+                    None => false,
+                    Some(i) if i + 1 < app.input_history.len() => {
+                        app.input = app.input_history[i + 1].clone();
+                        app.history_idx = Some(i + 1);
+                        false
+                    }
+                    Some(_) => {
+                        app.input = std::mem::take(&mut app.saved_draft);
+                        app.history_idx = None;
+                        false
+                    }
+                }
             }
             KeyCode::Up => { if app.scroll_offset > 0 { app.scroll_offset -= 1; app.did_scroll_up(); } false }
             KeyCode::Down => { let max = app.max_scroll(); if app.scroll_offset < max { app.scroll_offset += 1; app.check_sticky(); } false }

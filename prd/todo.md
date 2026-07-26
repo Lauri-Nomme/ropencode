@@ -350,12 +350,59 @@ Opening header: `╭─ lang ─╮` in `heading_fg`. Closing footer: `╰─╯
 
 ---
 
+## Remaining High-Value (added 2026-07-24)
+
+### H1. Input history (Up/Down prompt recall)
+**Files:** `src/tui.rs`
+
+No way to recall previous prompts. Standard TUI convention: Up/Down when input field is focused cycles through message history.
+
+**Implementation:** Store sent prompts in a `Vec<String>` ring buffer. Up arrow sets `input` to the previous prompt, Down arrow goes forward. Cursor position resets to end of line.
+
+**Priority:** High
+
+---
+
+### H2. Session delete
+**Files:** `src/acp.rs`, `src/tui.rs`, `src/main.rs`
+
+Can list and load sessions but not delete them. Need a way to remove stale sessions from within the TUI.
+
+**Implementation:** Add `TuiCommand::DeleteSession { session_id }`, `client.delete_session()` that calls `session/delete` ACP method, keybinding (e.g. `Ctrl+D` in session picker or `/delete` command) with confirmation prompt.
+
+**Priority:** Medium
+
+---
+
+### H3. Wire `[defaults]` model/cwd from config
+**Files:** `src/main.rs`, `src/tui.rs`
+
+`config.toml` has a `[defaults]` section with `model` and `cwd` fields, but they're never used. The model from config should be auto-set on session start via `SetModel`.
+
+**Implementation:** Load `Config` in `main.rs`, pass `Defaults` to `tui::run()`. On first render, if `defaults.model` is set, send `SetModel` command. Use `defaults.cwd` as initial working directory instead of `current_dir()`.
+
+**Priority:** Medium
+
+---
+
+### H4. Agent cycling (Tab/Shift+Tab)
+**Files:** `src/acp.rs`, `src/tui.rs`, `src/main.rs`
+
+If opencode exposes multiple agents via `configOptions` (like models), allow cycling through them with Tab/Shift+Tab. Show current agent in status bar.
+
+**Implementation:** Parse `agent` config option from `parse_config_options()` similar to model parsing. Store available agents in `App`. `Tab`/`Shift+Tab` cycles through agents. Sends `session/set_config_option` for `configId: "agent"`. Status bar shows agent name.
+
+**Priority:** Medium
+
+---
+
 ## Execution Order
 
-1. **Bugs** (B1→B2→B3→B4→B5)
-2. **High-priority UX** (U1→U2→U3→U5→U6→U4)
-3. **Rendering** (R2→R1→R5→R3→R8→R4→R6→R7→R9)
-4. **Polish** (P1→P2→P3)
-5. **Technical debt** (T1→T2→T3→T4)
+1. **Bugs** (B1→B2→B3→B4→B5) ✅
+2. **High-priority UX** (U1→U2→U3→U5→U6→U4) ✅
+3. **Rendering** (R2→R1→R5→R3→R8→R4→R6→R7→R9) ✅
+4. **Polish** (P1→P2→P3) ✅
+5. **High-value** (H1→H2→H3→H4)
+6. **Technical debt** (T1→T2→T3→T4) ⏳ (T1:T2 done, T3:T4 remain)
 
 Each item is a single commit.
