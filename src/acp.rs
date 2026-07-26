@@ -17,6 +17,7 @@ pub enum TuiCommand {
     SetModel { model: String },
     ListSessions { cwd: String },
     LoadSession { session_id: String, cwd: String },
+    DeleteSession { session_id: String, cwd: String },
 }
 
 #[derive(Debug, Clone)]
@@ -139,6 +140,13 @@ impl Client {
             "sessionId": session_id,
             "configId": "model",
             "value": model,
+        }))).await
+    }
+
+    pub async fn delete_session(&mut self, session_id: &str, cwd: &str) -> Result<Value> {
+        self.request("session/delete", Some(serde_json::json!({
+            "sessionId": session_id,
+            "cwd": cwd,
         }))).await
     }
 

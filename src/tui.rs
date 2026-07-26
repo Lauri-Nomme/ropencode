@@ -281,6 +281,18 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                     }
                     KeyCode::Up => { *selected = selected.saturating_sub(1); }
                     KeyCode::Down => { *selected = selected.saturating_add(1); }
+                    KeyCode::Char('d') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                        let f = filter.clone();
+                        let filtered: Vec<usize> = sessions.iter().enumerate().filter(|(_, s)| s.title.contains(&f) || s.session_id.contains(&f) || f.is_empty()).map(|(i, _)| i).collect();
+                        if let Some(idx) = filtered.get(*selected).and_then(|idx| sessions.get(*idx)) {
+                            let _ = app.cmd_tx.send(crate::acp::TuiCommand::DeleteSession {
+                                session_id: idx.session_id.clone(),
+                                cwd: app.cwd.clone(),
+                            });
+                        }
+                        app.mode = Mode::Normal;
+                        return false;
+                    }
                     KeyCode::Backspace => { filter.pop(); *selected = 0; }
                     KeyCode::Char(c) => { if c != '\n' && c != '\r' { filter.push(c); *selected = 0; } }
                     _ => {}
@@ -750,10 +762,12 @@ fn render_help(f: &mut Frame<'_>, area: Rect, app: &App) {
         Line::from(Span::styled(" Keybindings", Style::default().fg(t.accent_color))),
         Line::from(Span::raw("")),
         Line::from(Span::styled("  ↑/↓         Scroll conversation", Style::default().fg(t.thinking_color))),
+        Line::from(Span::styled("  Alt+↑/↓     Recall prompt history", Style::default().fg(t.thinking_color))),
         Line::from(Span::styled("  PgUp/PgDn   Page scroll", Style::default().fg(t.thinking_color))),
         Line::from(Span::styled("  Home/End    Jump to top/bottom", Style::default().fg(t.thinking_color))),
         Line::from(Span::styled("  Tab         Expand/collapse tool output", Style::default().fg(t.thinking_color))),
         Line::from(Span::styled("  n/N         Next/prev search match", Style::default().fg(t.thinking_color))),
+        Line::from(Span::styled("  Ctrl+D      Delete selected session (session picker)", Style::default().fg(t.thinking_color))),
         Line::from(Span::styled("  Ctrl+O      Open URL at viewport center", Style::default().fg(t.thinking_color))),
         Line::from(Span::styled("  v           Start/stop text selection", Style::default().fg(t.thinking_color))),
         Line::from(Span::styled("  y           Copy selected text to clipboard", Style::default().fg(t.thinking_color))),
