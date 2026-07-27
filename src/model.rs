@@ -363,7 +363,7 @@ fn preprocess_tables(text: &str) -> String {
         let is_table_line = trimmed.starts_with('|') && trimmed.ends_with('|') && trimmed.contains('|');
         if is_table_line && !in_table {
             in_table = true;
-            out.push_str("```\n");
+            out.push_str("```table\n");
             out.push_str(line);
             out.push('\n');
         } else if is_table_line {
@@ -395,19 +395,26 @@ fn render_text_lines(text: &str, ss: &ThemeStyleSheet) -> Vec<Line<'static>> {
     let mut out = Vec::new();
     let mut in_code = false;
     let mut is_diff = false;
+    let mut is_table = false;
     for line in md_text.lines.iter() {
         let text_content: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
         if text_content.starts_with("```") {
             if in_code {
-                out.push(Line::styled(" ╰─╯", Style::default().fg(Color::DarkGray).bg(ss.code_bg)));
+                if !is_table {
+                    out.push(Line::styled(" ╰─╯", Style::default().fg(Color::DarkGray).bg(ss.code_bg)));
+                }
                 in_code = false;
                 is_diff = false;
+                is_table = false;
             } else {
                 let lang = text_content[3..].trim();
-                if lang.is_empty() {
-                    out.push(Line::styled(" ╭─╮", Style::default().fg(ss.heading_fg).bg(ss.code_bg)));
-                } else {
-                    out.push(Line::styled(format!(" ╭─ {} ─╮", lang), Style::default().fg(ss.heading_fg).bg(ss.code_bg)));
+                is_table = lang == "table";
+                if !is_table {
+                    if lang.is_empty() {
+                        out.push(Line::styled(" ╭─╮", Style::default().fg(ss.heading_fg).bg(ss.code_bg)));
+                    } else {
+                        out.push(Line::styled(format!(" ╭─ {} ─╮", lang), Style::default().fg(ss.heading_fg).bg(ss.code_bg)));
+                    }
                 }
                 in_code = true;
                 is_diff = lang == "diff";
@@ -430,7 +437,7 @@ fn render_text_lines(text: &str, ss: &ThemeStyleSheet) -> Vec<Line<'static>> {
         };
         let line_style = if is_diff {
             Style::default().fg(line_fg)
-        } else if in_code {
+        } else if in_code && !is_table {
             Style::default().fg(ss.inline_code_fg)
         } else {
             Style::default()
@@ -440,7 +447,7 @@ fn render_text_lines(text: &str, ss: &ThemeStyleSheet) -> Vec<Line<'static>> {
             ratatui::text::Span::styled(content, line_style.patch(s.style))
         }).collect();
         let mut line = Line::from(owned);
-        if in_code {
+        if in_code && !is_table {
             line = line.patch_style(Style::default().bg(ss.code_bg));
         }
         out.push(line);

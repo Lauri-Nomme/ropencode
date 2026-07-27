@@ -39,10 +39,12 @@ struct App {
     search_matches: Vec<usize>,
     search_idx: usize,
     sel_active: bool,
-    sel_anchor: usize,
+    sel_start: usize,
+    sel_end: usize,
     input_history: Vec<String>,
     history_idx: Option<usize>,
     saved_draft: String,
+    cursor_pos: usize,
 }
 
 impl App {
@@ -60,10 +62,12 @@ impl App {
             search_matches: vec![],
             search_idx: 0,
             sel_active: false,
-            sel_anchor: 0,
+            sel_start: 0,
+            sel_end: 0,
             input_history: Vec::new(),
             history_idx: None,
             saved_draft: String::new(),
+            cursor_pos: 0,
         }
     }
 
@@ -405,7 +409,16 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                 }
                 false
             }
-            KeyCode::Backspace => { app.input.pop(); app.cmd_picker_selection = 0; false }
+            KeyCode::Backspace => {
+                if app.cursor_pos > 0 {
+                    let pos = app.cursor_pos;
+                    app.input.remove(pos - 1);
+                    app.cursor_pos = pos - 1;
+                }
+                app.cmd_picker_selection = 0; false
+            }
+            KeyCode::Left => { if app.cursor_pos > 0 { app.cursor_pos -= 1; } false }
+            KeyCode::Right => { if app.cursor_pos < app.input.len() { app.cursor_pos += 1; } false }
             KeyCode::Tab => {
                 let last_visible = last_visible_tool_msg(&app.conversation.messages, app.scroll_offset, app.viewport_height);
                 if let Some(msg_idx) = last_visible {
@@ -427,6 +440,7 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                     };
                     if let Some(i) = idx {
                         app.input = app.input_history[i].clone();
+                        app.cursor_pos = app.input.len();
                         app.history_idx = Some(i);
                     }
                     false
@@ -437,11 +451,13 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                     None => false,
                     Some(i) if i + 1 < app.input_history.len() => {
                         app.input = app.input_history[i + 1].clone();
+                        app.cursor_pos = app.input.len();
                         app.history_idx = Some(i + 1);
                         false
                     }
                     Some(_) => {
                         app.input = std::mem::take(&mut app.saved_draft);
+                        app.cursor_pos = app.input.len();
                         app.history_idx = None;
                         false
                     }
@@ -473,7 +489,9 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
             }
             KeyCode::Char('v') if app.input.is_empty() && app.search_query.is_none() => {
                 app.sel_active = !app.sel_active;
-                app.sel_anchor = app.scroll_offset + app.viewport_height / 2;
+                let center = app.scroll_offset + app.viewport_height / 2;
+                app.sel_start = center;
+                app.sel_end = center;
                 false
             }
             KeyCode::Char('y') if app.sel_active && app.input.is_empty() => {
@@ -485,18 +503,45 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                 open_url_at_offset(app, app.scroll_offset + app.viewport_height / 2);
                 false
             }
+            KeyCode::Char('w') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                let pos = app.cursor_pos;
+                let before = app.input[..pos].to_string();
+                let after = app.input[pos..].to_string();
+                let trimmed = before.trim_end_matches(|c: char| c.is_alphanumeric() || c == '_');
+                let trimmed = trimmed.trim_end_matches(|c: char| !c.is_alphanumeric() && c != '_');
+                let removed = before.len() - trimmed.len();
+                if removed > 0 {
+                    app.input = format!("{}{}", trimmed, after);
+                    app.cursor_pos = trimmed.len();
+                }
+                false
+            }
+            KeyCode::Char('u') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                let after = app.input[app.cursor_pos..].to_string();
+                app.input = after;
+                app.cursor_pos = 0;
+                false
+            }
+            KeyCode::Char('a') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => { app.cursor_pos = 0; false }
+            KeyCode::Char('e') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => { app.cursor_pos = app.input.len(); false }
             KeyCode::Char(c) if app.search_query.is_some() && app.input.is_empty() => match c {
                 'n' => { app.search_next(); false }
                 'N' => { app.search_prev(); false }
                 _ => { app.input.push(c); app.cmd_picker_selection = 0; false }
             }
-            KeyCode::Char(c) => { app.input.push(c); app.cmd_picker_selection = 0; false }
+            KeyCode::Char(c) => {
+                let pos = app.cursor_pos;
+                app.input.insert(pos, c);
+                app.cursor_pos = pos + 1;
+                app.cmd_picker_selection = 0; false
+            }
             _ => false,
         },
         TermEvent::Mouse(mev) => {
-            if mev.kind == MouseEventKind::Down(MouseButton::Left) && (mev.row as usize) < app.viewport_height {
-                let line_idx = app.scroll_offset + mev.row as usize;
-                if line_idx < app.cached_lines.len() {
+            let line_idx = app.scroll_offset + mev.row as usize;
+            let in_convo = (mev.row as usize) < app.viewport_height && line_idx < app.cached_lines.len();
+            match mev.kind {
+                MouseEventKind::Down(MouseButton::Left) if in_convo => {
                     let line_text = app.cached_lines[line_idx].to_string();
                     if line_text.contains("[+]") || line_text.contains("[-]") {
                         if let Some((msg_idx, tool_idx)) = crate::model::global_line_to_tool_call(&app.conversation.messages, line_idx) {
@@ -504,14 +549,28 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                             app.tab_tool_idx = (tool_idx + 1) % app.conversation.messages[msg_idx].tool_calls.len();
                             app.mark_dirty(); app.rebuild_cache();
                         }
+                    } else {
+                        app.sel_active = true;
+                        app.sel_start = line_idx;
+                        app.sel_end = line_idx;
                     }
+                    false
                 }
-                false
-            } else { match mev.kind {
+                MouseEventKind::Drag(MouseButton::Left) if app.sel_active && in_convo => {
+                    app.sel_end = line_idx;
+                    false
+                }
+                MouseEventKind::Up(MouseButton::Left) if app.sel_active => {
+                    let lo = app.sel_start.min(app.sel_end);
+                    let hi = app.sel_start.max(app.sel_end);
+                    app.sel_start = lo;
+                    app.sel_end = hi;
+                    false
+                }
                 MouseEventKind::ScrollDown => { let max = app.max_scroll(); app.scroll_offset = (app.scroll_offset + 3).min(max); app.check_sticky(); false }
                 MouseEventKind::ScrollUp => { app.scroll_offset = app.scroll_offset.saturating_sub(3); app.did_scroll_up(); false }
                 _ => false,
-            }}
+            }
         },
         TermEvent::Resize(_, h) => { app.viewport_height = (h as usize).saturating_sub(STATUS_HEIGHT + 3); app.clamp_offset(); if app.sticky_bottom { app.scroll_offset = app.max_scroll(); } false }
         _ => false,
@@ -561,8 +620,8 @@ fn render_conversation(f: &mut Frame<'_>, area: Rect, app: &App) {
     let offset = app.scroll_offset.min(total.saturating_sub(1));
     let start = offset;
     let end = (start + area.height as usize).min(total);
-    let sel_lo = if app.sel_active { app.sel_anchor.min(app.scroll_offset + app.viewport_height / 2) } else { 0 };
-    let sel_hi = if app.sel_active { app.sel_anchor.max(app.scroll_offset + app.viewport_height / 2) } else { 0 };
+    let sel_lo = if app.sel_active { app.sel_start.min(app.sel_end) } else { 0 };
+    let sel_hi = if app.sel_active { app.sel_start.max(app.sel_end) } else { 0 };
     let mut lines: Vec<Line<'static>> = if start < total {
         let slice = &app.cached_lines[start..end];
         let search_highlight = app.search_query.as_ref().and_then(|q| app.search_matches.get(app.search_idx).map(|&m| (q.clone(), m)));
@@ -616,8 +675,8 @@ fn render_conversation(f: &mut Frame<'_>, area: Rect, app: &App) {
 }
 
 fn yank_selection(app: &App) {
-    let center = app.scroll_offset + app.viewport_height / 2;
-    let (start, end) = if center < app.sel_anchor { (center, app.sel_anchor) } else { (app.sel_anchor, center) };
+    let start = app.sel_start;
+    let end = app.sel_end;
     let text: String = app.cached_lines[start..=end.min(app.cached_lines.len().saturating_sub(1))]
         .iter().map(|l| {
             let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
@@ -723,6 +782,7 @@ fn highlight_line(line: &Line<'static>, query: &str, bg: Color) -> Line<'static>
 
 fn render_input(f: &mut Frame<'_>, area: Rect, app: &App) {
     let bar = Span::styled(" ┃ ", Style::default().fg(app.theme.user_color));
+    let cursor_line_x = 3u16 + app.cursor_pos as u16;
     let text = Text::from(vec![
         Line::from(vec![bar.clone()]),
         if app.input.is_empty() {
@@ -733,6 +793,9 @@ fn render_input(f: &mut Frame<'_>, area: Rect, app: &App) {
         Line::from(vec![bar.clone()]),
     ]);
     f.render_widget(Paragraph::new(text).style(Style::default().bg(app.theme.panel_bg)), area);
+    if !app.input.is_empty() {
+        f.set_cursor_position((area.x + cursor_line_x, area.y + 1));
+    }
 }
 
 fn render_status(f: &mut Frame<'_>, area: Rect, app: &App) {
