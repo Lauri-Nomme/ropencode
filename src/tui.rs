@@ -362,11 +362,21 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
     match evt {
         TermEvent::Key(key) if key.kind == KeyEventKind::Press => match key.code {
             KeyCode::Enter if !(key.modifiers & (crossterm::event::KeyModifiers::ALT | crossterm::event::KeyModifiers::CONTROL)).is_empty() => {
-                app.input.push('\n');
+                let pos = app.input.floor_char_boundary(app.cursor_pos.min(app.input.len()));
+                app.input.insert(pos, '\n');
+                app.cursor_pos = pos + 1;
                 false
             }
             KeyCode::Char('j') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
-                app.input.push('\n');
+                let pos = app.input.floor_char_boundary(app.cursor_pos.min(app.input.len()));
+                app.input.insert(pos, '\n');
+                app.cursor_pos = pos + 1;
+                false
+            }
+            KeyCode::Char('\n') => {
+                let pos = app.input.floor_char_boundary(app.cursor_pos.min(app.input.len()));
+                app.input.insert(pos, '\n');
+                app.cursor_pos = pos + 1;
                 false
             }
             KeyCode::Enter => {
