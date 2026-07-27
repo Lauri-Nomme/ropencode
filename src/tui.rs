@@ -410,14 +410,16 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                 false
             }
             KeyCode::Backspace => {
-                if app.cursor_pos > 0 {
+                if app.cursor_pos > 0 && !app.input.is_empty() {
                     let mut prev = 0usize;
                     for (i, _) in app.input.char_indices() {
                         if i >= app.cursor_pos { break; }
                         prev = i;
                     }
-                    app.input.remove(prev);
-                    app.cursor_pos = prev;
+                    if prev < app.input.len() {
+                        app.input.remove(prev);
+                        app.cursor_pos = prev;
+                    }
                 }
                 app.cmd_picker_selection = 0; false
             }
@@ -738,7 +740,10 @@ fn yank_selection(app: &App) {
             let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
             s
         }).collect::<Vec<_>>().join("\n");
-    let _ = crossterm::execute!(std::io::stdout(), crossterm::style::Print(format!("\x1b]52;c;{}\x07", base64(&text))));
+    use std::io::Write;
+    let mut stderr = std::io::stderr();
+    let _ = write!(stderr, "\x1b]52;c;{}\x07", base64(&text));
+    let _ = stderr.flush();
 }
 
 fn base64(data: &str) -> String {
