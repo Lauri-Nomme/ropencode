@@ -18,6 +18,8 @@ pub struct ThemeStyleSheet {
     pub panel_bg: Color,
     pub thinking_color: Color,
     pub thinking_bg: Color,
+    pub user_color: Color,
+    pub error_color: Color,
 }
 
 impl ThemeStyleSheet {
@@ -32,6 +34,8 @@ impl ThemeStyleSheet {
             panel_bg: theme.panel_bg,
             thinking_color: theme.thinking_color,
             thinking_bg: theme.panel_bg,
+            user_color: theme.user_color,
+            error_color: theme.error_color,
         }
     }
 }
@@ -290,24 +294,24 @@ impl Conversation {
     pub fn rendered_lines(&self) -> Vec<Line<'static>> {
         let mut out = Vec::with_capacity(self.total_lines);
         for msg in &self.messages {
+            let ss = &self.stylesheet;
             if msg.role == Role::User {
-                let user_fg = Color::Rgb(200, 135, 255);
                 out.push(Line::from(""));
-                out.push(Line::styled(format!(" ┃ [{}]", msg.time), Style::default().fg(user_fg)));
+                out.push(Line::styled(format!(" ┃ [{}]", msg.time), Style::default().fg(ss.user_color)));
                 for l in &msg.rendered {
-                    let mut spans = vec![ratatui::text::Span::styled(" ┃ ", Style::default().fg(user_fg))];
+                    let mut spans = vec![ratatui::text::Span::styled(" ┃ ", Style::default().fg(ss.user_color))];
                     spans.extend(l.spans.iter().map(|s| {
-                        ratatui::text::Span::styled(s.content.clone(), Style::default().fg(user_fg))
+                        ratatui::text::Span::styled(s.content.clone(), Style::default().fg(ss.user_color))
                     }));
                     out.push(Line::from(spans));
                 }
             } else {
                 let label = if msg.streaming { format!(" Assistant ─ [{}]", msg.time) } else { format!(" Assistant ─ [{}]", msg.time) };
-                out.push(Line::styled(label, Style::default().fg(self.stylesheet.heading_fg)));
+                out.push(Line::styled(label, Style::default().fg(ss.heading_fg)));
                 let has_thinking = !msg.thinking_rendered.is_empty();
                 if has_thinking {
                     for l in &msg.thinking_rendered {
-                        out.push(Line::styled(l.to_string(), Style::default().fg(self.stylesheet.thinking_color).bg(self.stylesheet.thinking_bg)));
+                        out.push(Line::styled(l.to_string(), Style::default().fg(ss.thinking_color).bg(ss.thinking_bg)));
                     }
                 }
                 for l in &msg.rendered {
@@ -319,8 +323,8 @@ impl Conversation {
             }
         }
         if let Some(err) = &self.error {
-            out.push(Line::styled(format!("  ✕ {err}"), Style::default().fg(Color::Rgb(224, 108, 117))));
-            out.push(Line::styled("", Style::default().fg(Color::Rgb(224, 108, 117))));
+            out.push(Line::styled(format!("  ✕ {err}"), Style::default().fg(self.stylesheet.error_color)));
+            out.push(Line::styled("", Style::default().fg(self.stylesheet.error_color)));
         }
         out
     }
@@ -400,19 +404,21 @@ fn render_text_lines(text: &str, ss: &ThemeStyleSheet) -> Vec<Line<'static>> {
         let line_fg = if is_diff {
             let trimmed = text_content.trim_start();
             if trimmed.starts_with('+') && !trimmed.starts_with("+++") {
-                Color::Green
+                Color::Rgb(195, 232, 141)
             } else if trimmed.starts_with('-') && !trimmed.starts_with("---") {
-                Color::Red
+                Color::Rgb(240, 113, 120)
             } else if trimmed.starts_with("@@") {
-                ss.heading_fg
+                Color::Rgb(137, 221, 255)
             } else {
-                Color::White
+                Color::Rgb(238, 255, 255)
             }
         } else {
-            Color::White
+            Color::Rgb(238, 255, 255)
         };
         let line_style = if is_diff {
             Style::default().fg(line_fg)
+        } else if in_code {
+            Style::default().fg(ss.inline_code_fg)
         } else {
             Style::default()
         };
