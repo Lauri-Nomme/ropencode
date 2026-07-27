@@ -33,7 +33,7 @@ impl ThemeStyleSheet {
             code_bg: theme.code_bg,
             panel_bg: theme.panel_bg,
             thinking_color: theme.thinking_color,
-            thinking_bg: theme.panel_bg,
+            thinking_bg: theme.background,
             user_color: theme.user_color,
             error_color: theme.error_color,
         }
