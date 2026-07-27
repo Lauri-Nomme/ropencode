@@ -1,5 +1,5 @@
 use crate::config::Theme;
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
 use std::collections::VecDeque;
 use tui_markdown::StyleSheet;
@@ -396,11 +396,15 @@ fn render_text_lines(text: &str, ss: &ThemeStyleSheet) -> Vec<Line<'static>> {
     let mut in_code = false;
     let mut is_diff = false;
     let mut is_table = false;
+    let mut table_lines: Vec<String> = Vec::new();
     for line in md_text.lines.iter() {
         let text_content: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
         if text_content.starts_with("```") {
             if in_code {
-                if !is_table {
+                if is_table {
+                    out.extend(render_table_from_markdown(&table_lines, ss));
+                    table_lines.clear();
+                } else {
                     out.push(Line::styled(" ╰─╯", Style::default().fg(Color::DarkGray).bg(ss.code_bg)));
                 }
                 in_code = false;
@@ -421,6 +425,10 @@ fn render_text_lines(text: &str, ss: &ThemeStyleSheet) -> Vec<Line<'static>> {
             }
             continue;
         }
+        if is_table {
+            table_lines.push(text_content);
+            continue;
+        }
         let line_fg = if is_diff {
             let trimmed = text_content.trim_start();
             if trimmed.starts_with('+') && !trimmed.starts_with("+++") {
@@ -437,7 +445,7 @@ fn render_text_lines(text: &str, ss: &ThemeStyleSheet) -> Vec<Line<'static>> {
         };
         let line_style = if is_diff {
             Style::default().fg(line_fg)
-        } else if in_code && !is_table {
+        } else if in_code {
             Style::default().fg(ss.inline_code_fg)
         } else {
             Style::default()
@@ -447,10 +455,65 @@ fn render_text_lines(text: &str, ss: &ThemeStyleSheet) -> Vec<Line<'static>> {
             ratatui::text::Span::styled(content, line_style.patch(s.style))
         }).collect();
         let mut line = Line::from(owned);
-        if in_code && !is_table {
+        if in_code {
             line = line.patch_style(Style::default().bg(ss.code_bg));
         }
         out.push(line);
+    }
+    out
+}
+
+fn render_table_from_markdown(raw_lines: &[String], ss: &ThemeStyleSheet) -> Vec<Line<'static>> {
+    if raw_lines.len() < 2 { return vec![]; }
+    let rows: Vec<Vec<&str>> = raw_lines.iter()
+        .filter(|l| l.contains('|'))
+        .map(|l| l.trim().trim_matches('|').split('|').map(|c| c.trim()).collect())
+        .collect();
+    if rows.is_empty() || rows[0].is_empty() { return vec![]; }
+    let col_count = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+    let mut widths: Vec<usize> = vec![0; col_count];
+    for row in &rows {
+        for (i, cell) in row.iter().enumerate() {
+            if i < col_count {
+                widths[i] = widths[i].max(cell.len());
+            }
+        }
+    }
+    let sep = raw_lines.get(1).map(|l| l.trim()).unwrap_or("");
+    let alignments: Vec<&str> = if col_count > 0 {
+        sep.trim_matches('|').split('|').map(|c| c.trim()).collect()
+    } else { vec![] };
+    let heading_style = Style::default().fg(ss.heading_fg).add_modifier(Modifier::BOLD);
+    let mut out = Vec::new();
+    for (ri, row) in rows.iter().enumerate() {
+        if ri == 1 && row.iter().all(|c| c.chars().all(|ch| ch == '-' || ch == ':')) {
+            continue;
+        }
+        let mut cells = Vec::new();
+        for (i, cell) in row.iter().enumerate() {
+            if i >= col_count { break; }
+            let w = widths[i];
+            let align = alignments.get(i).copied().unwrap_or("");
+            let padded = if align.starts_with(':') && align.ends_with(':') {
+                let left = (w.saturating_sub(cell.len())) / 2;
+                let right = w.saturating_sub(cell.len() + left);
+                format!("{:left$}{}{:right$}", "", cell, "", left = left, right = right)
+            } else if align.ends_with(':') {
+                format!("{:>w$}", cell, w = w)
+            } else {
+                format!("{:<w$}", cell, w = w)
+            };
+            cells.push(padded);
+        }
+        let line_str = format!(" │ {} │", cells.join(" │ "));
+        let style = if ri == 0 { heading_style } else { Style::default() };
+        out.push(Line::styled(line_str, style));
+    }
+    let sep_line: String = widths.iter().map(|w| "─".repeat(w + 2)).collect::<Vec<_>>().join("┼");
+    let border_style = Style::default().fg(Color::DarkGray);
+    if !sep_line.is_empty() {
+        out.insert(0, Line::styled(format!(" ┌─{}─┐", sep_line), border_style));
+        out.push(Line::styled(format!(" └─{}─┘", sep_line), border_style));
     }
     out
 }
