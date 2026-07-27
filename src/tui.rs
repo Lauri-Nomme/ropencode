@@ -642,7 +642,7 @@ fn render_welcome(f: &mut Frame<'_>, area: Rect, app: &App) {
         "    /\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\    ",
         "    \\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/    ",
     ];
-    let code = vec![
+    let code_raw = vec![
         "  _____ ____  _____  ______ ",
         " / ____/ __ \\|  __ \\|  ____|",
         "| |   | |  | | |  | | |__   ",
@@ -650,7 +650,12 @@ fn render_welcome(f: &mut Frame<'_>, area: Rect, app: &App) {
         "| |___| |__| | |__| | |____ ",
         " \\_____\\____/|_____/|______|",
     ];
-    let logo_lines: Vec<&str> = rope.iter().chain(std::iter::once(&"")).chain(code.iter()).copied().collect();
+    let rope_w = rope.iter().map(|l| l.len()).max().unwrap_or(0);
+    let code_w = code_raw.iter().map(|l| l.len()).max().unwrap_or(0);
+    let pad = (rope_w.saturating_sub(code_w)) / 2;
+    let code: Vec<String> = code_raw.iter().map(|l| format!("{:pad$}{}", "", l, pad = pad)).collect();
+    let code_refs: Vec<&str> = code.iter().map(|s| s.as_str()).collect();
+    let logo_lines: Vec<&str> = rope.iter().chain(std::iter::once(&"")).chain(code_refs.iter()).copied().collect();
     let max_w = logo_lines.iter().map(|l| l.len()).max().unwrap_or(0);
     let mut y = area.top() + (area.height.saturating_sub(logo_lines.len() as u16 + 4)) / 2;
     let left = area.left() + area.width.saturating_sub(max_w as u16 + 4) / 2;
