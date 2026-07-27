@@ -699,8 +699,6 @@ fn highlight_line(line: &Line<'static>, query: &str, bg: Color) -> Line<'static>
 
 fn render_input(f: &mut Frame<'_>, area: Rect, app: &App) {
     let bar = Span::styled(" ┃ ", Style::default().fg(app.theme.user_color));
-    let info = &app.conversation.info;
-    let model_label = if info.provider != "—" { format!("{}/{}", info.provider, info.model) } else { info.model.clone() };
     let text = Text::from(vec![
         Line::from(vec![bar.clone()]),
         if app.input.is_empty() {
@@ -708,7 +706,7 @@ fn render_input(f: &mut Frame<'_>, area: Rect, app: &App) {
         } else {
             Line::from(vec![bar.clone(), Span::raw(&app.input)])
         },
-        Line::from(vec![bar.clone(), Span::styled(format!(" {} · Build", model_label), Style::default().fg(app.theme.thinking_color))]),
+        Line::from(vec![bar.clone()]),
     ]);
     f.render_widget(Paragraph::new(text).style(Style::default().bg(app.theme.panel_bg)), area);
 }
@@ -741,7 +739,7 @@ fn render_status(f: &mut Frame<'_>, area: Rect, app: &App) {
     };
     let pad = (area.width as usize).saturating_sub(left.len() + right_w);
 
-    let mut spans = vec![Span::styled(left, Style::default().fg(app.theme.thinking_color))];
+    let mut spans = vec![Span::styled(format!("   {left}"), Style::default().fg(app.theme.thinking_color))];
     if pad > 0 { spans.push(Span::raw(" ".repeat(pad))); }
     spans.extend(right_spans);
 

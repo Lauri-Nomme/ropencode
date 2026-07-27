@@ -306,16 +306,28 @@ impl Conversation {
                     out.push(Line::from(spans));
                 }
             } else {
-                let label = if msg.streaming { format!(" Assistant ─ [{}]", msg.time) } else { format!(" Assistant ─ [{}]", msg.time) };
-                out.push(Line::styled(label, Style::default().fg(ss.heading_fg)));
+                out.push(Line::styled(format!("   [{}]", msg.time), Style::default().fg(ss.heading_fg)));
+                let indent = "   ";
                 let has_thinking = !msg.thinking_rendered.is_empty();
                 if has_thinking {
                     for l in &msg.thinking_rendered {
-                        out.push(Line::styled(l.to_string(), Style::default().fg(ss.thinking_color).bg(ss.thinking_bg)));
+                        let line_str = l.to_string();
+                        let patched = if line_str.is_empty() {
+                            Line::styled(indent, Style::default().fg(ss.thinking_color).bg(ss.thinking_bg))
+                        } else {
+                            let mut spans = vec![ratatui::text::Span::styled(indent, Style::default().fg(ss.thinking_color).bg(ss.thinking_bg))];
+                            spans.extend(l.spans.iter().map(|s| ratatui::text::Span::styled(s.content.clone(), Style::default().fg(ss.thinking_color).bg(ss.thinking_bg))));
+                            Line::from(spans)
+                        };
+                        out.push(patched);
                     }
                 }
                 for l in &msg.rendered {
-                    out.push(l.clone());
+                    let mut spans = vec![ratatui::text::Span::styled(indent, Style::default())];
+                    spans.extend(l.spans.iter().map(|s| {
+                        ratatui::text::Span::styled(s.content.clone(), s.style)
+                    }));
+                    out.push(Line::from(spans));
                 }
             }
             for l in &msg.rendered_tools {
