@@ -189,7 +189,7 @@ pub async fn run(
 ) -> Result<()> {
     crossterm::terminal::enable_raw_mode()?;
     let mut stdout = io::stdout();
-    crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen, crossterm::event::EnableMouseCapture)?;
+    crossterm::execute!(stdout, crossterm::terminal::EnterAlternateScreen, crossterm::terminal::Clear(crossterm::terminal::ClearType::All), crossterm::event::EnableMouseCapture)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
     let mut app = App::new(cwd, cmd_tx, theme);
     app.conversation.set_theme(&app.theme);
@@ -733,14 +733,31 @@ fn render_conversation(f: &mut Frame<'_>, area: Rect, app: &App) {
 }
 
 fn yank_selection(app: &App) {
-    let (start_line, _start_col) = if app.sel_start.0 <= app.sel_end.0 { app.sel_start } else { app.sel_end };
-    let (end_line, _end_col) = if app.sel_start.0 <= app.sel_end.0 { app.sel_end } else { app.sel_start };
+    let (start_line, start_col) = if app.sel_start.0 <= app.sel_end.0 { app.sel_start } else { app.sel_end };
+    let (end_line, end_col) = if app.sel_start.0 <= app.sel_end.0 { app.sel_end } else { app.sel_start };
     let end = end_line.min(app.cached_lines.len().saturating_sub(1));
-    let text: String = app.cached_lines[start_line..=end]
-        .iter().map(|l| {
-            let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
-            s
-        }).collect::<Vec<_>>().join("\n");
+    let mut text = String::new();
+    for (i, line) in app.cached_lines[start_line..=end].iter().enumerate() {
+        let line_text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        let global_i = start_line + i;
+        if global_i == start_line && start_line == end_line {
+            let lo = start_col.min(end_col);
+            let hi = start_col.max(end_col);
+            let chars: String = line_text.chars().skip(lo).take(hi.saturating_sub(lo)).collect();
+            text.push_str(&chars);
+        } else if global_i == start_line {
+            let chars: String = line_text.chars().skip(start_col).collect();
+            text.push_str(&chars);
+        } else if global_i == end_line {
+            let chars: String = line_text.chars().take(end_col).collect();
+            text.push_str(&chars);
+        } else {
+            text.push_str(&line_text);
+        }
+        if global_i != end {
+            text.push('\n');
+        }
+    }
     use std::io::Write;
     let mut stderr = std::io::stderr();
     if std::env::var("TMUX").is_ok() {
