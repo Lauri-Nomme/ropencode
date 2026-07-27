@@ -551,7 +551,7 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
             KeyCode::Char(c) => {
                 let pos = app.cursor_pos;
                 app.input.insert(pos, c);
-                app.cursor_pos = pos + 1;
+                app.cursor_pos = pos + c.len_utf8();
                 app.cmd_picker_selection = 0; false
             }
             _ => false,
@@ -738,9 +738,7 @@ fn yank_selection(app: &App) {
             let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
             s
         }).collect::<Vec<_>>().join("\n");
-    use std::io::Write;
-    let _ = std::io::stdout().write_all(format!("\x1b]52;c;{}\x07", base64(&text)).as_bytes());
-    let _ = std::io::stdout().flush();
+    let _ = crossterm::execute!(std::io::stdout(), crossterm::style::Print(format!("\x1b]52;c;{}\x07", base64(&text))));
 }
 
 fn base64(data: &str) -> String {
