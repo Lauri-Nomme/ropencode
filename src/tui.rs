@@ -740,16 +740,16 @@ fn yank_selection(app: &App) {
             let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
             s
         }).collect::<Vec<_>>().join("\n");
-    let b64 = base64(&text);
-    let osc52 = if std::env::var("TMUX").is_ok() {
-        // tmux passthrough: double the ESC inside, wrap in tmux escape
-        format!("\x1bPtmux;\x1b\x1b]52;c;{}\x07\x1b\\", b64)
-    } else {
-        format!("\x1b]52;c;{}\x07", b64)
-    };
     use std::io::Write;
     let mut stderr = std::io::stderr();
-    let _ = stderr.write_all(osc52.as_bytes());
+    if std::env::var("TMUX").is_ok() {
+        let _ = std::process::Command::new("tmux").args(["set-buffer", "-w", &text]).output();
+        let b64 = base64(&text);
+        let _ = stderr.write_all(format!("\x1bPtmux;\x1b\x1b]52;c;{}\x07\x1b\\", b64).as_bytes());
+    } else {
+        let b64 = base64(&text);
+        let _ = stderr.write_all(format!("\x1b]52;c;{}\x07", b64).as_bytes());
+    }
     let _ = stderr.flush();
 }
 
