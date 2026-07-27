@@ -357,7 +357,7 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
 
     match evt {
         TermEvent::Key(key) if key.kind == KeyEventKind::Press => match key.code {
-            KeyCode::Enter if key.modifiers.contains(crossterm::event::KeyModifiers::ALT) => {
+            KeyCode::Enter if !(key.modifiers & (crossterm::event::KeyModifiers::ALT | crossterm::event::KeyModifiers::CONTROL)).is_empty() => {
                 app.input.push('\n');
                 false
             }
@@ -566,18 +566,41 @@ fn render_conversation(f: &mut Frame<'_>, area: Rect, app: &App) {
     let mut lines: Vec<Line<'static>> = if start < total {
         let slice = &app.cached_lines[start..end];
         let search_highlight = app.search_query.as_ref().and_then(|q| app.search_matches.get(app.search_idx).map(|&m| (q.clone(), m)));
+        let view_w = area.width.saturating_sub(2) as usize;
         slice.iter().enumerate().map(|(i, l)| {
             let global_idx = start + i;
             let in_sel = app.sel_active && global_idx >= sel_lo && global_idx <= sel_hi;
+            let line = {
+                let text: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+                let trimmed = text.trim_start();
+                if trimmed.starts_with("╭─") || trimmed.starts_with("╰─") {
+                    let style = l.spans.first().map(|s| s.style).unwrap_or_default();
+                    let is_top = trimmed.starts_with("╭─");
+                    let lang = if is_top && text.trim().len() > 4 {
+                        let raw = text.trim();
+                        let end = raw.find("─╮").unwrap_or(raw.len());
+                        if end > 2 { raw[2..end].trim().to_string() } else { String::new() }
+                    } else { String::new() };
+                    let bar = if is_top { "╭" } else { "╰" };
+                    let end_corner = if is_top { "╮" } else { "╯" };
+                    let lang_part = if lang.is_empty() { String::new() } else { format!(" {} ", lang) };
+                    let avail = view_w.saturating_sub(bar.len() + lang_part.len() + end_corner.len());
+                    let fill = if avail > 0 { "─".repeat(avail) } else { String::new() };
+                    let padded = format!("{}{}{}{}", bar, lang_part, fill, end_corner);
+                    Line::styled(padded, style)
+                } else {
+                    l.clone()
+                }
+            };
             if let Some((ref q, m)) = search_highlight {
                 if global_idx == m {
-                    return highlight_line(l, &q.to_lowercase(), app.theme.selection_bg);
+                    return highlight_line(&line, &q.to_lowercase(), app.theme.selection_bg);
                 }
             }
             if in_sel {
-                l.clone().patch_style(Style::default().bg(app.theme.selection_bg))
+                line.patch_style(Style::default().bg(app.theme.selection_bg))
             } else {
-                l.clone()
+                line
             }
         }).collect()
     } else { vec![] };

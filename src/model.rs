@@ -175,6 +175,7 @@ impl Conversation {
     }
 
     pub fn add_user_message(&mut self, text: &str, created_at: Option<&str>) {
+        self.error = None;
         let rendered = render_text_lines(text, &self.stylesheet);
         let lines = rendered.len() + 2;
         self.total_lines += lines;
@@ -237,8 +238,11 @@ impl Conversation {
         self.messages[last].is_thinking = true;
         self.messages[last].thinking_text.push_str(delta);
         let rendered = render_text_lines(delta, &self.stylesheet);
-        self.total_lines += rendered.len();
-        self.messages[last].thinking_rendered.extend(rendered);
+        for l in rendered {
+            if l.spans.iter().all(|s| s.content.trim().is_empty()) { continue; }
+            self.total_lines += 1;
+            self.messages[last].thinking_rendered.push(l);
+        }
     }
 
     pub fn finish_thinking(&mut self) {
@@ -293,8 +297,8 @@ impl Conversation {
 
     pub fn rendered_lines(&self) -> Vec<Line<'static>> {
         let mut out = Vec::with_capacity(self.total_lines);
+        let ss = &self.stylesheet;
         for msg in &self.messages {
-            let ss = &self.stylesheet;
             if msg.role == Role::User {
                 out.push(Line::from(""));
                 out.push(Line::styled(format!(" ┃ [{}]", msg.time), Style::default().fg(ss.user_color)));
@@ -306,20 +310,15 @@ impl Conversation {
                     out.push(Line::from(spans));
                 }
             } else {
+                out.push(Line::from(""));
                 out.push(Line::styled(format!("   [{}]", msg.time), Style::default().fg(ss.heading_fg)));
                 let indent = "   ";
                 let has_thinking = !msg.thinking_rendered.is_empty();
                 if has_thinking {
                     for l in &msg.thinking_rendered {
-                        let line_str = l.to_string();
-                        let patched = if line_str.is_empty() {
-                            Line::styled(indent, Style::default().fg(ss.thinking_color).bg(ss.thinking_bg))
-                        } else {
-                            let mut spans = vec![ratatui::text::Span::styled(indent, Style::default().fg(ss.thinking_color).bg(ss.thinking_bg))];
-                            spans.extend(l.spans.iter().map(|s| ratatui::text::Span::styled(s.content.clone(), Style::default().fg(ss.thinking_color).bg(ss.thinking_bg))));
-                            Line::from(spans)
-                        };
-                        out.push(patched);
+                        let mut spans = vec![ratatui::text::Span::styled(indent, Style::default().fg(ss.thinking_color).bg(ss.thinking_bg))];
+                        spans.extend(l.spans.iter().map(|s| ratatui::text::Span::styled(s.content.clone(), Style::default().fg(ss.thinking_color).bg(ss.thinking_bg))));
+                        out.push(Line::from(spans));
                     }
                 }
                 for l in &msg.rendered {
@@ -333,10 +332,12 @@ impl Conversation {
             for l in &msg.rendered_tools {
                 out.push(l.clone());
             }
-        }
-        if let Some(err) = &self.error {
-            out.push(Line::styled(format!("  ✕ {err}"), Style::default().fg(self.stylesheet.error_color)));
-            out.push(Line::styled("", Style::default().fg(self.stylesheet.error_color)));
+            if let Some(err) = &self.error {
+                if msg.role == Role::Assistant {
+                    out.push(Line::styled(format!("   ✕ {err}"), Style::default().fg(ss.error_color)));
+                    out.push(Line::from(""));
+                }
+            }
         }
         out
     }
