@@ -483,7 +483,7 @@ fn render_table_from_markdown(raw_lines: &[String], ss: &ThemeStyleSheet) -> Vec
     let alignments: Vec<&str> = if col_count > 0 {
         sep.trim_matches('|').split('|').map(|c| c.trim()).collect()
     } else { vec![] };
-    let heading_style = Style::default().fg(ss.heading_fg).add_modifier(Modifier::BOLD);
+    let heading_style = Style::default().fg(ss.heading_fg).add_modifier(Modifier::BOLD).bg(ss.panel_bg);
     let mut out = Vec::new();
     for (ri, row) in rows.iter().enumerate() {
         if ri == 1 && row.iter().all(|c| c.chars().all(|ch| ch == '-' || ch == ':')) {
