@@ -638,26 +638,25 @@ fn render(f: &mut Frame<'_>, app: &mut App) {
 }
 
 fn render_welcome(f: &mut Frame<'_>, area: Rect, app: &App) {
-    let logo = vec![
-        "╔═══╗╔═══╗╔══╗ ╔═══╗",
-        "║╔═╗║║╔══╝║╔╗║ ║╔══╝",
-        "║╚═╝║║╚══╗║╚╝╚╗║╚══╗",
-        "║╔╗╔╝║╔══╝║╔═╗║║╔══╝",
-        "║║║╚╗║╚══╗║╚═╝║║╚══╗",
-        "╚╝╚═╝╚═══╝╚═══╝╚═══╝",
-        "",
-        "╔════╗╔═══╗╔═══╗╔═══╗",
-        "╚══╗═║║╔══╝║╔═╗║║╔══╝",
-        "  ╔╝╔╝║╚══╗║╚═╝║║╚══╗",
-        " ╔╝╔╝ ║╔══╝║╔╗╔╝║╔══╝",
-        "╔╝═╚╗ ║╚══╗║║║╚╗║╚══╗",
-        "╚═══╝ ╚═══╝╚╝╚═╝╚═══╝",
+    let rope = vec![
+        "     _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  ",
+        "    / \\/ \\/ \\/ \\/ \\/ \\/ \\/ \\/ \\/ \\/ \\/ \\/ \\/ \\/ \\/ \\ ",
+        "    \\_/\\_/\\_/\\_/\\_/\\_/\\_/\\_/\\_/\\_/\\_/\\_/\\_/\\_/\\_/\\_/",
     ];
-    let mut y = area.top() + (area.height.saturating_sub(logo.len() as u16 + 4)) / 2;
-    let left = area.left() + area.width.saturating_sub(logo[0].len() as u16 + 4) / 2;
-    for line in &logo {
-        let span = Span::styled(*line, Style::default().fg(app.theme.accent_color));
-        f.render_widget(Paragraph::new(Text::from(Line::from(span))), Rect::new(left, y, line.len() as u16, 1));
+    let code = vec![
+        " ██████   ██████  ██████  ██████ ",
+        "██  ███  ██        ██    ██      ",
+        "██ ██ ██ ██████    ██    ██████  ",
+        "████  ██ ██        ██        ██  ",
+        " ██████  ██████    ██    ██████  ",
+    ];
+    let logo_lines: Vec<&str> = rope.iter().chain(std::iter::once(&"")).chain(code.iter()).copied().collect();
+    let max_w = logo_lines.iter().map(|l| l.len()).max().unwrap_or(0);
+    let mut y = area.top() + (area.height.saturating_sub(logo_lines.len() as u16 + 4)) / 2;
+    let left = area.left() + area.width.saturating_sub(max_w as u16 + 4) / 2;
+    for line in &logo_lines {
+        let span = Span::styled(*line, Style::default().fg(if line.contains('/') || line.contains('\\') { app.theme.thinking_color } else { app.theme.accent_color }));
+        f.render_widget(Paragraph::new(Text::from(Line::from(span))), Rect::new(left, y, max_w as u16, 1));
         y += 1;
     }
 }
