@@ -12,6 +12,8 @@ pub struct Config {
 
 #[derive(Debug, Clone)]
 pub struct Theme {
+    pub background: Color,
+    pub panel_bg: Color,
     pub status_bar_bg: Color,
     pub user_color: Color,
     pub assistant_color: Color,
@@ -42,6 +44,10 @@ impl<'de> Deserialize<'de> for Theme {
         #[derive(Deserialize)]
         struct RawTheme {
             #[serde(default = "default_hex")]
+            background: String,
+            #[serde(default = "default_hex")]
+            panel_bg: String,
+            #[serde(default = "default_hex")]
             status_bar_bg: String,
             #[serde(default = "default_hex")]
             user_color: String,
@@ -70,13 +76,15 @@ impl<'de> Deserialize<'de> for Theme {
         }
         let raw = RawTheme::deserialize(deserializer)?;
         Ok(Theme {
+            background: parse_hex(&raw.background),
+            panel_bg: parse_hex(&raw.panel_bg),
             status_bar_bg: parse_hex(&raw.status_bar_bg),
             user_color: parse_hex(&raw.user_color),
             assistant_color: parse_hex(&raw.assistant_color),
             error_color: parse_hex(&raw.error_color),
             thinking_color: parse_hex(&raw.thinking_color),
             accent_color: parse_hex(&raw.accent_color),
-            selection_bg: Color::Rgb(40, 40, 60),
+            selection_bg: Color::Rgb(50, 50, 50),
             heading_fg: parse_hex(&raw.heading_fg),
             link_fg: parse_hex(&raw.link_fg),
             blockquote_fg: parse_hex(&raw.blockquote_fg),
@@ -91,19 +99,21 @@ impl<'de> Deserialize<'de> for Theme {
 impl Default for Theme {
     fn default() -> Self {
         Theme {
-            status_bar_bg: Color::Rgb(20, 20, 28),
+            background: Color::Rgb(10, 10, 10),
+            panel_bg: Color::Rgb(30, 30, 30),
+            status_bar_bg: Color::Rgb(20, 20, 20),
             user_color: Color::Magenta,
-            assistant_color: Color::White,
-            error_color: Color::Red,
-            thinking_color: Color::DarkGray,
-            accent_color: Color::Cyan,
-            selection_bg: Color::Rgb(40, 40, 60),
-            heading_fg: Color::Cyan,
-            link_fg: Color::Rgb(80, 160, 255),
-            blockquote_fg: Color::Green,
-            inline_code_fg: Color::White,
-            inline_code_bg: Color::Rgb(40, 40, 52),
-            code_bg: Color::Rgb(25, 25, 35),
+            assistant_color: Color::Rgb(238, 238, 238),
+            error_color: Color::Rgb(224, 108, 117),
+            thinking_color: Color::Rgb(128, 128, 128),
+            accent_color: Color::Rgb(157, 124, 216),
+            selection_bg: Color::Rgb(50, 50, 50),
+            heading_fg: Color::Rgb(157, 124, 216),
+            link_fg: Color::Rgb(250, 178, 131),
+            blockquote_fg: Color::Rgb(86, 182, 194),
+            inline_code_fg: Color::Rgb(127, 216, 143),
+            inline_code_bg: Color::Rgb(30, 30, 30),
+            code_bg: Color::Rgb(20, 20, 20),
             syntax_theme: "base16-ocean.dark".into(),
         }
     }

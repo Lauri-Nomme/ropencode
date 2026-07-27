@@ -15,6 +15,9 @@ pub struct ThemeStyleSheet {
     inline_code_fg: Color,
     inline_code_bg: Color,
     pub code_bg: Color,
+    pub panel_bg: Color,
+    pub thinking_color: Color,
+    pub thinking_bg: Color,
 }
 
 impl ThemeStyleSheet {
@@ -26,6 +29,9 @@ impl ThemeStyleSheet {
             inline_code_fg: theme.inline_code_fg,
             inline_code_bg: theme.inline_code_bg,
             code_bg: theme.code_bg,
+            panel_bg: theme.panel_bg,
+            thinking_color: theme.thinking_color,
+            thinking_bg: theme.panel_bg,
         }
     }
 }
@@ -284,28 +290,24 @@ impl Conversation {
     pub fn rendered_lines(&self) -> Vec<Line<'static>> {
         let mut out = Vec::with_capacity(self.total_lines);
         for msg in &self.messages {
-            let style = if msg.is_thinking {
-                Style::default().fg(Color::DarkGray)
-            } else {
-                Style::default()
-            };
             if msg.role == Role::User {
+                let user_fg = Color::Rgb(200, 135, 255);
                 out.push(Line::from(""));
-                out.push(Line::styled(format!(" ┃ [{}]", msg.time), Style::default().fg(Color::Magenta)));
+                out.push(Line::styled(format!(" ┃ [{}]", msg.time), Style::default().fg(user_fg)));
                 for l in &msg.rendered {
-                    let mut spans = vec![ratatui::text::Span::styled(" ┃ ", Style::default().fg(Color::Magenta))];
+                    let mut spans = vec![ratatui::text::Span::styled(" ┃ ", Style::default().fg(user_fg))];
                     spans.extend(l.spans.iter().map(|s| {
-                        ratatui::text::Span::styled(s.content.clone(), Style::default().fg(Color::Magenta))
+                        ratatui::text::Span::styled(s.content.clone(), Style::default().fg(user_fg))
                     }));
                     out.push(Line::from(spans));
                 }
             } else {
-                let label = if msg.streaming { format!(" Assistant (streaming…) [{}]", msg.time) } else { format!(" Assistant [{}]", msg.time) };
-                out.push(Line::styled(label, style));
+                let label = if msg.streaming { format!(" Assistant ─ [{}]", msg.time) } else { format!(" Assistant ─ [{}]", msg.time) };
+                out.push(Line::styled(label, Style::default().fg(self.stylesheet.heading_fg)));
                 let has_thinking = !msg.thinking_rendered.is_empty();
                 if has_thinking {
                     for l in &msg.thinking_rendered {
-                        out.push(Line::styled(l.to_string(), Style::default().fg(Color::DarkGray)));
+                        out.push(Line::styled(l.to_string(), Style::default().fg(self.stylesheet.thinking_color).bg(self.stylesheet.thinking_bg)));
                     }
                 }
                 for l in &msg.rendered {
@@ -317,8 +319,8 @@ impl Conversation {
             }
         }
         if let Some(err) = &self.error {
-            out.push(Line::styled(format!("  ✕ {err}"), Style::default().fg(Color::Red)));
-            out.push(Line::styled("", Style::default().fg(Color::Red)));
+            out.push(Line::styled(format!("  ✕ {err}"), Style::default().fg(Color::Rgb(224, 108, 117))));
+            out.push(Line::styled("", Style::default().fg(Color::Rgb(224, 108, 117))));
         }
         out
     }
@@ -331,7 +333,7 @@ impl Conversation {
 
     fn rebuild_tool_lines(&mut self, msg_idx: usize) {
         if let Some(msg) = self.messages.get_mut(msg_idx) {
-            msg.rendered_tools = render_tool_lines(&msg.tool_calls, &msg.text);
+            msg.rendered_tools = render_tool_lines(&msg.tool_calls, &msg.text, self.stylesheet.panel_bg);
         }
     }
 }
@@ -427,9 +429,8 @@ fn render_text_lines(text: &str, ss: &ThemeStyleSheet) -> Vec<Line<'static>> {
     out
 }
 
-fn render_tool_lines(tools: &[ToolCall], _msg_text: &str) -> Vec<Line<'static>> {
+fn render_tool_lines(tools: &[ToolCall], _msg_text: &str, panel_bg: Color) -> Vec<Line<'static>> {
     let mut out = Vec::new();
-    let bg = Color::Rgb(30, 30, 40);
     for tc in tools {
         let status_color = match tc.status.as_str() {
             "completed" => Color::Green,
@@ -440,22 +441,22 @@ fn render_tool_lines(tools: &[ToolCall], _msg_text: &str) -> Vec<Line<'static>> 
         let collapse_hint = if tc.collapsed { " [+]" } else { " [-]" };
         out.push(Line::styled(
             format!("  🛠 {}{}{}", tc.tool, collapse_hint, if tc.status == "completed" { " ✓" } else { "" }),
-            Style::default().fg(status_color).bg(bg),
+            Style::default().fg(status_color).bg(panel_bg),
         ));
         if let Some(result) = &tc.result {
             let lines: Vec<&str> = result.lines().collect();
             let show = if tc.collapsed { &lines[..lines.len().min(COLLAPSED_MAX_LINES)] } else { &lines[..] };
             for &r_line in show {
-                out.push(Line::styled(format!("    {r_line}"), Style::default().bg(bg)));
+                out.push(Line::styled(format!("    {r_line}"), Style::default().bg(panel_bg)));
             }
             if tc.collapsed && lines.len() > COLLAPSED_MAX_LINES {
                 out.push(Line::styled(
                     format!("    … {} more lines (click/hotkey to expand)", lines.len() - COLLAPSED_MAX_LINES),
-                    Style::default().fg(Color::DarkGray).bg(bg),
+                    Style::default().fg(Color::DarkGray).bg(panel_bg),
                 ));
             }
         }
-        out.push(Line::styled("", Style::default().bg(bg)));
+        out.push(Line::styled("", Style::default().bg(panel_bg)));
     }
     out
 }

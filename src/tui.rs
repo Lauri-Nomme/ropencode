@@ -8,7 +8,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::prelude::Stylize;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 use ratatui::{Frame, Terminal};
 use std::collections::VecDeque;
 use std::io;
@@ -523,6 +523,7 @@ fn render(f: &mut Frame<'_>, app: &mut App) {
     app.flush_stream_buffer();
     let area = f.area();
     if area.width == 0 || area.height == 0 { return; }
+
     let convo_h = (area.height as usize).saturating_sub(STATUS_HEIGHT + 3);
     let chunks = Layout::default().direction(Direction::Vertical)
         .constraints([Constraint::Length(convo_h as u16), Constraint::Length(3), Constraint::Length(STATUS_HEIGHT as u16)])
@@ -583,9 +584,9 @@ fn render_conversation(f: &mut Frame<'_>, area: Rect, app: &App) {
     if app.agent_busy && !app.conversation.messages.back().is_some_and(|m| m.streaming) {
         const SPINNER: &[char] = &['⣷', '⣯', '⣟', '⡿', '⢿', '⣻', '⣽', '⣾'];
         let frame = (app.frame / 3) as usize % SPINNER.len();
-        lines.push(Line::styled(format!(" {} thinking…", SPINNER[frame]), Style::default().fg(Color::Yellow)));
+        lines.push(Line::styled(format!(" {} thinking…", SPINNER[frame]), Style::default().fg(Color::Yellow).bg(app.theme.background)));
     }
-    f.render_widget(Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }), area);
+    f.render_widget(Paragraph::new(Text::from(lines)).style(Style::default().bg(app.theme.background)).wrap(Wrap { trim: false }), area);
     let mut state = ScrollbarState::default().position(offset).content_length(total);
     f.render_stateful_widget(Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight).begin_symbol(Some("↑")).end_symbol(Some("↓")), area, &mut state);
 }
@@ -697,11 +698,11 @@ fn highlight_line(line: &Line<'static>, query: &str, bg: Color) -> Line<'static>
 }
 
 fn render_input(f: &mut Frame<'_>, area: Rect, app: &App) {
-    let block = Block::default().borders(Borders::TOP).title(" Prompt (Enter send · Alt+Enter newline · /help · /model · /exit)");
+    let block = Block::default().borders(Borders::TOP).border_style(Style::default().fg(Color::Rgb(72, 72, 72))).title(" Prompt (Enter send · Alt+Enter newline · /help · /model · /exit)");
     let text = if app.input.is_empty() {
         Text::from(Line::from(Span::styled("Type your message…", Style::default().fg(app.theme.thinking_color))))
     } else { Text::from(Line::from(Span::raw(&app.input))) };
-    f.render_widget(Paragraph::new(text).block(block), area);
+    f.render_widget(Paragraph::new(text).style(Style::default().bg(app.theme.background)).block(block), area);
 }
 
 fn render_status(f: &mut Frame<'_>, area: Rect, app: &App) {
@@ -776,7 +777,7 @@ fn render_help(f: &mut Frame<'_>, area: Rect, app: &App) {
         Line::from(Span::styled(" Press Esc or Enter to close", Style::default().fg(t.thinking_color))),
     ];
     let help_area = Rect::new(x, y, w, h);
-    f.render_widget(ratatui::widgets::Clear, help_area);
+    f.render_widget(Clear, help_area);
     f.render_widget(
         Paragraph::new(Text::from(lines)).style(Style::default().bg(t.status_bar_bg)).block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(t.accent_color)).bg(t.status_bar_bg)),
         help_area,
@@ -814,7 +815,7 @@ fn render_model_picker(f: &mut Frame<'_>, area: Rect, filter: &str, models: &[St
         lines.push(Line::styled(format!("{marker} {label}{suffix}"), style));
     }
     lines.push(Line::from(Span::styled(" Esc cancel · Enter select", Style::default().fg(t.thinking_color).bg(t.status_bar_bg))));
-    f.render_widget(ratatui::widgets::Clear, picker_area);
+    f.render_widget(Clear, picker_area);
     f.render_widget(
         Paragraph::new(Text::from(lines)).style(Style::default().bg(t.status_bar_bg)).block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(t.accent_color)).bg(t.status_bar_bg)),
         picker_area,
@@ -842,7 +843,7 @@ fn render_command_picker(f: &mut Frame<'_>, area: Rect, app: &App) {
         lines.push(Line::styled(format!("{marker} /{}  {}", COMMANDS[idx], CMD_DESCRIPTIONS[idx]), style));
     }
     let picker_area = Rect::new(x, popup_y, popup_w, popup_h);
-    f.render_widget(ratatui::widgets::Clear, picker_area);
+    f.render_widget(Clear, picker_area);
     f.render_widget(
         Paragraph::new(Text::from(lines)).style(Style::default().bg(app.theme.status_bar_bg)).block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(app.theme.accent_color)).bg(app.theme.status_bar_bg)),
         picker_area,
@@ -899,7 +900,7 @@ fn render_session_picker(f: &mut Frame<'_>, area: Rect, filter: &str, sessions: 
         }
     }
     lines.push(Line::from(Span::styled(" Esc cancel · Enter load", Style::default().fg(t.thinking_color).bg(t.status_bar_bg))));
-    f.render_widget(ratatui::widgets::Clear, picker_area);
+    f.render_widget(Clear, picker_area);
     f.render_widget(
         Paragraph::new(Text::from(lines)).style(Style::default().bg(t.status_bar_bg)).block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(t.accent_color)).bg(t.status_bar_bg)),
         picker_area,
