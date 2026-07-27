@@ -509,12 +509,6 @@ fn render_table_from_markdown(raw_lines: &[String], ss: &ThemeStyleSheet) -> Vec
         let style = if ri == 0 { heading_style } else { Style::default() };
         out.push(Line::styled(line_str, style));
     }
-    let sep_line: String = widths.iter().map(|w| "─".repeat(w + 2)).collect::<Vec<_>>().join("┼");
-    let border_style = Style::default().fg(Color::DarkGray);
-    if !sep_line.is_empty() {
-        out.insert(0, Line::styled(format!(" ┌─{}─┐", sep_line), border_style));
-        out.push(Line::styled(format!(" └─{}─┘", sep_line), border_style));
-    }
     out
 }
 
