@@ -698,7 +698,6 @@ fn highlight_line(line: &Line<'static>, query: &str, bg: Color) -> Line<'static>
 }
 
 fn render_input(f: &mut Frame<'_>, area: Rect, app: &App) {
-    let block = Block::default().borders(Borders::TOP).border_style(Style::default().fg(app.theme.status_bar_bg)).title(" Prompt (Enter send · Alt+Enter newline · /help · /model · /exit)");
     let prefix = Span::styled(" ┃ ", Style::default().fg(app.theme.user_color));
     let text = if app.input.is_empty() {
         Text::from(Line::from(vec![
@@ -711,7 +710,7 @@ fn render_input(f: &mut Frame<'_>, area: Rect, app: &App) {
             Span::raw(&app.input),
         ]))
     };
-    f.render_widget(Paragraph::new(text).style(Style::default().bg(app.theme.background)).block(block), area);
+    f.render_widget(Paragraph::new(text).style(Style::default().bg(app.theme.panel_bg)), area);
 }
 
 fn render_status(f: &mut Frame<'_>, area: Rect, app: &App) {
