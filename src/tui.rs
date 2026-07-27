@@ -365,6 +365,10 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                 app.input.push('\n');
                 false
             }
+            KeyCode::Char('j') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                app.input.push('\n');
+                false
+            }
             KeyCode::Enter => {
                 app.flush_errors();
                 let text = app.input.trim().to_string();
@@ -609,8 +613,9 @@ fn render(f: &mut Frame<'_>, app: &mut App) {
     if area.width == 0 || area.height == 0 { return; }
 
     let convo_h = (area.height as usize).saturating_sub(STATUS_HEIGHT + 3);
+    let input_h = ((app.input.lines().count() + 2).max(3) as u16).min(convo_h.saturating_sub(1) as u16);
     let chunks = Layout::default().direction(Direction::Vertical)
-        .constraints([Constraint::Length(convo_h as u16), Constraint::Length(3), Constraint::Length(STATUS_HEIGHT as u16)])
+        .constraints([Constraint::Length(convo_h as u16 - input_h), Constraint::Length(input_h), Constraint::Length(STATUS_HEIGHT as u16)])
         .split(area);
     app.viewport_height = chunks[0].height as usize;
     app.ensure_cache(); app.clamp_offset();
@@ -866,18 +871,28 @@ fn highlight_line(line: &Line<'static>, query: &str, bg: Color) -> Line<'static>
 
 fn render_input(f: &mut Frame<'_>, area: Rect, app: &App) {
     let bar = Span::styled(" ┃ ", Style::default().fg(app.theme.user_color));
-    let cursor_line_x = 3u16 + app.cursor_pos as u16;
-    let text = Text::from(vec![
+    let lines: Vec<&str> = if app.input.is_empty() { vec![""] } else { app.input.split('\n').collect() };
+    let clamped = app.input.floor_char_boundary(app.cursor_pos.min(app.input.len()));
+    let cursor_line = app.input[..clamped].matches('\n').count();
+    let line_start = lines[..cursor_line].iter().map(|l| l.len() + 1).sum::<usize>().min(clamped);
+    let cursor_col = 3u16 + (clamped.saturating_sub(line_start)) as u16;
+    let mut text_lines = vec![
         Line::from(vec![bar.clone()]),
+    ];
+    for line_text in &lines {
         if app.input.is_empty() {
-            Line::from(vec![bar.clone(), Span::styled("Type your message…", Style::default().fg(app.theme.thinking_color))])
+            text_lines.push(Line::from(vec![bar.clone(), Span::styled("Type your message…", Style::default().fg(app.theme.thinking_color))]));
         } else {
-            Line::from(vec![bar.clone(), Span::raw(&app.input)])
-        },
-        Line::from(vec![bar.clone()]),
-    ]);
+            text_lines.push(Line::from(vec![bar.clone(), Span::raw(*line_text)]));
+        }
+    }
+    text_lines.push(Line::from(vec![bar.clone()]));
+    let total_text_lines = text_lines.len();
+    let text = Text::from(text_lines);
     f.render_widget(Paragraph::new(text).style(Style::default().bg(app.theme.panel_bg)), area);
-    f.set_cursor_position((area.x + cursor_line_x, area.y + 1));
+    if cursor_line < total_text_lines.saturating_sub(1) {
+        f.set_cursor_position((area.x + cursor_col, area.y + cursor_line as u16 + 1));
+    }
 }
 
 fn render_status(f: &mut Frame<'_>, area: Rect, app: &App) {

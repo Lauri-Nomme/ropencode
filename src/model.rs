@@ -236,13 +236,11 @@ impl Conversation {
         }
         let last = self.thinking_msg_idx.unwrap();
         self.messages[last].is_thinking = true;
+        let old_len = self.messages[last].thinking_rendered.len();
         self.messages[last].thinking_text.push_str(delta);
-        let rendered = render_text_lines(delta, &self.stylesheet);
-        for l in rendered {
-            if l.spans.iter().all(|s| s.content.trim().is_empty()) { continue; }
-            self.total_lines += 1;
-            self.messages[last].thinking_rendered.push(l);
-        }
+        let rendered = render_text_lines(&self.messages[last].thinking_text, &self.stylesheet);
+        self.messages[last].thinking_rendered = rendered;
+        self.total_lines = self.total_lines.saturating_sub(old_len).saturating_add(self.messages[last].thinking_rendered.len());
     }
 
     pub fn finish_thinking(&mut self) {
