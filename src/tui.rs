@@ -579,7 +579,8 @@ fn render_conversation(f: &mut Frame<'_>, area: Rect, app: &App) {
                     let lang = if is_top && text.trim().len() > 4 {
                         let raw = text.trim();
                         let end = raw.find("─╮").unwrap_or(raw.len());
-                        if end > 2 { raw[2..end].trim().to_string() } else { String::new() }
+                        let start = raw.char_indices().nth(2).map(|(i, _)| i).unwrap_or(end);
+                        if start < end { raw[start..end].trim().to_string() } else { String::new() }
                     } else { String::new() };
                     let bar = if is_top { "╭" } else { "╰" };
                     let end_corner = if is_top { "╮" } else { "╯" };
