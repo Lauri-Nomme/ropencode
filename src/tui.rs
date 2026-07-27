@@ -39,8 +39,8 @@ struct App {
     search_matches: Vec<usize>,
     search_idx: usize,
     sel_active: bool,
-    sel_start: usize,
-    sel_end: usize,
+    sel_start: (usize, usize),
+    sel_end: (usize, usize),
     input_history: Vec<String>,
     history_idx: Option<usize>,
     saved_draft: String,
@@ -62,8 +62,8 @@ impl App {
             search_matches: vec![],
             search_idx: 0,
             sel_active: false,
-            sel_start: 0,
-            sel_end: 0,
+            sel_start: (0, 0),
+            sel_end: (0, 0),
             input_history: Vec::new(),
             history_idx: None,
             saved_draft: String::new(),
@@ -411,14 +411,33 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
             }
             KeyCode::Backspace => {
                 if app.cursor_pos > 0 {
-                    let pos = app.cursor_pos;
-                    app.input.remove(pos - 1);
-                    app.cursor_pos = pos - 1;
+                    let mut prev = 0usize;
+                    for (i, _) in app.input.char_indices() {
+                        if i >= app.cursor_pos { break; }
+                        prev = i;
+                    }
+                    app.input.remove(prev);
+                    app.cursor_pos = prev;
                 }
                 app.cmd_picker_selection = 0; false
             }
-            KeyCode::Left => { if app.cursor_pos > 0 { app.cursor_pos -= 1; } false }
-            KeyCode::Right => { if app.cursor_pos < app.input.len() { app.cursor_pos += 1; } false }
+            KeyCode::Left => {
+                let mut ci = 0usize;
+                for (i, _) in app.input.char_indices() {
+                    if i >= app.cursor_pos { break; }
+                    ci = i;
+                }
+                app.cursor_pos = ci;
+                false
+            }
+            KeyCode::Right => {
+                let mut next = app.input.len();
+                for (i, _) in app.input.char_indices() {
+                    if i > app.cursor_pos { next = i; break; }
+                }
+                app.cursor_pos = next;
+                false
+            }
             KeyCode::Tab => {
                 let last_visible = last_visible_tool_msg(&app.conversation.messages, app.scroll_offset, app.viewport_height);
                 if let Some(msg_idx) = last_visible {
@@ -490,8 +509,8 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
             KeyCode::Char('v') if app.input.is_empty() && app.search_query.is_none() => {
                 app.sel_active = !app.sel_active;
                 let center = app.scroll_offset + app.viewport_height / 2;
-                app.sel_start = center;
-                app.sel_end = center;
+                app.sel_start = (center, 0);
+                app.sel_end = (center, 0);
                 false
             }
             KeyCode::Char('y') if app.sel_active && app.input.is_empty() => {
@@ -551,20 +570,23 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                         }
                     } else {
                         app.sel_active = true;
-                        app.sel_start = line_idx;
-                        app.sel_end = line_idx;
+                        app.sel_start = (line_idx, mev.column as usize);
+                        app.sel_end = (line_idx, mev.column as usize);
                     }
                     false
                 }
                 MouseEventKind::Drag(MouseButton::Left) if app.sel_active && in_convo => {
-                    app.sel_end = line_idx;
+                    app.sel_end = (line_idx, mev.column as usize);
                     false
                 }
                 MouseEventKind::Up(MouseButton::Left) if app.sel_active => {
-                    let lo = app.sel_start.min(app.sel_end);
-                    let hi = app.sel_start.max(app.sel_end);
-                    app.sel_start = lo;
-                    app.sel_end = hi;
+                    app.sel_end = (line_idx, mev.column as usize);
+                    let lo = app.sel_start.0.min(app.sel_end.0);
+                    let hi = app.sel_start.0.max(app.sel_end.0);
+                    app.sel_start.0 = lo;
+                    app.sel_end.0 = hi;
+                    yank_selection(app);
+                    app.sel_active = false;
                     false
                 }
                 MouseEventKind::ScrollDown => { let max = app.max_scroll(); app.scroll_offset = (app.scroll_offset + 3).min(max); app.check_sticky(); false }
@@ -615,13 +637,42 @@ fn render(f: &mut Frame<'_>, app: &mut App) {
     }
 }
 
+fn render_welcome(f: &mut Frame<'_>, area: Rect, app: &App) {
+    let logo = vec![
+        "╔═══╗╔═══╗╔══╗ ╔═══╗",
+        "║╔═╗║║╔══╝║╔╗║ ║╔══╝",
+        "║╚═╝║║╚══╗║╚╝╚╗║╚══╗",
+        "║╔╗╔╝║╔══╝║╔═╗║║╔══╝",
+        "║║║╚╗║╚══╗║╚═╝║║╚══╗",
+        "╚╝╚═╝╚═══╝╚═══╝╚═══╝",
+        "",
+        "╔════╗╔═══╗╔═══╗╔═══╗",
+        "╚══╗═║║╔══╝║╔═╗║║╔══╝",
+        "  ╔╝╔╝║╚══╗║╚═╝║║╚══╗",
+        " ╔╝╔╝ ║╔══╝║╔╗╔╝║╔══╝",
+        "╔╝═╚╗ ║╚══╗║║║╚╗║╚══╗",
+        "╚═══╝ ╚═══╝╚╝╚═╝╚═══╝",
+    ];
+    let mut y = area.top() + (area.height.saturating_sub(logo.len() as u16 + 4)) / 2;
+    let left = area.left() + area.width.saturating_sub(logo[0].len() as u16 + 4) / 2;
+    for line in &logo {
+        let span = Span::styled(*line, Style::default().fg(app.theme.accent_color));
+        f.render_widget(Paragraph::new(Text::from(Line::from(span))), Rect::new(left, y, line.len() as u16, 1));
+        y += 1;
+    }
+}
+
 fn render_conversation(f: &mut Frame<'_>, area: Rect, app: &App) {
+    if app.conversation.messages.is_empty() {
+        render_welcome(f, area, app);
+        return;
+    }
     let total = app.cached_lines.len();
     let offset = app.scroll_offset.min(total.saturating_sub(1));
     let start = offset;
     let end = (start + area.height as usize).min(total);
-    let sel_lo = if app.sel_active { app.sel_start.min(app.sel_end) } else { 0 };
-    let sel_hi = if app.sel_active { app.sel_start.max(app.sel_end) } else { 0 };
+    let sel_lo = if app.sel_active { app.sel_start.0.min(app.sel_end.0) } else { 0 };
+    let sel_hi = if app.sel_active { app.sel_start.0.max(app.sel_end.0) } else { 0 };
     let mut lines: Vec<Line<'static>> = if start < total {
         let slice = &app.cached_lines[start..end];
         let search_highlight = app.search_query.as_ref().and_then(|q| app.search_matches.get(app.search_idx).map(|&m| (q.clone(), m)));
@@ -675,9 +726,10 @@ fn render_conversation(f: &mut Frame<'_>, area: Rect, app: &App) {
 }
 
 fn yank_selection(app: &App) {
-    let start = app.sel_start;
-    let end = app.sel_end;
-    let text: String = app.cached_lines[start..=end.min(app.cached_lines.len().saturating_sub(1))]
+    let (start_line, _start_col) = if app.sel_start.0 <= app.sel_end.0 { app.sel_start } else { app.sel_end };
+    let (end_line, _end_col) = if app.sel_start.0 <= app.sel_end.0 { app.sel_end } else { app.sel_start };
+    let end = end_line.min(app.cached_lines.len().saturating_sub(1));
+    let text: String = app.cached_lines[start_line..=end]
         .iter().map(|l| {
             let s: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
             s
@@ -793,16 +845,15 @@ fn render_input(f: &mut Frame<'_>, area: Rect, app: &App) {
         Line::from(vec![bar.clone()]),
     ]);
     f.render_widget(Paragraph::new(text).style(Style::default().bg(app.theme.panel_bg)), area);
-    if !app.input.is_empty() {
-        f.set_cursor_position((area.x + cursor_line_x, area.y + 1));
-    }
+    f.set_cursor_position((area.x + cursor_line_x, area.y + 1));
 }
 
 fn render_status(f: &mut Frame<'_>, area: Rect, app: &App) {
     let info = &app.conversation.info;
     let ctx_color = if info.ctx_pct >= 90.0 { app.theme.error_color } else if info.ctx_pct >= 70.0 { Color::Yellow } else { app.theme.thinking_color };
-    let ctx_span = if info.ctx_total > 0 {
-        Some(Span::styled(format!("ctx {:.0}%", info.ctx_pct), Style::default().fg(ctx_color)))
+    let ctx_span = if info.ctx_total > 0 || info.ctx_pct > 0.0 {
+        let ctx_k = info.ctx_total as f64 / 1000.0;
+        Some(Span::styled(format!("ctx {:.0}K ({:.0}%)", ctx_k, info.ctx_pct), Style::default().fg(ctx_color)))
     } else { None };
     let cost_span = if info.cost > 0.0 {
         Some(Span::styled(format!("${:.4}", info.cost), Style::default().fg(app.theme.thinking_color)))
