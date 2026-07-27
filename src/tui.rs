@@ -525,7 +525,7 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                 false
             }
             KeyCode::Char('w') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
-                let pos = app.cursor_pos;
+                let pos = app.input.floor_char_boundary(app.cursor_pos.min(app.input.len()));
                 let before = app.input[..pos].to_string();
                 let after = app.input[pos..].to_string();
                 let trimmed = before.trim_end_matches(|c: char| c.is_alphanumeric() || c == '_');
@@ -538,7 +538,8 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                 false
             }
             KeyCode::Char('u') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
-                let after = app.input[app.cursor_pos..].to_string();
+                let pos = app.input.floor_char_boundary(app.cursor_pos.min(app.input.len()));
+                let after = app.input[pos..].to_string();
                 app.input = after;
                 app.cursor_pos = 0;
                 false
@@ -551,7 +552,7 @@ fn handle_input(app: &mut App, evt: TermEvent) -> bool {
                 _ => { app.input.push(c); app.cmd_picker_selection = 0; false }
             }
             KeyCode::Char(c) => {
-                let pos = app.cursor_pos;
+                let pos = app.input.floor_char_boundary(app.cursor_pos.min(app.input.len()));
                 app.input.insert(pos, c);
                 app.cursor_pos = pos + c.len_utf8();
                 app.cmd_picker_selection = 0; false
